@@ -69,6 +69,22 @@ async function main() {
     $$;
   `);
 
+  console.log("Installing appointment_request_recipients CHECK constraint...");
+  // Exactly one of clinic_id or provider_npi must be set per row. Drizzle
+  // doesn't ship CHECK constraints as a first-class feature yet, so we add
+  // it idempotently here.
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'arr_recipient_xor'
+      ) THEN
+        ALTER TABLE appointment_request_recipients
+          ADD CONSTRAINT arr_recipient_xor
+          CHECK ((clinic_id IS NOT NULL)::int + (provider_npi IS NOT NULL)::int = 1);
+      END IF;
+    END $$;
+  `);
+
   console.log("Migrations applied + haversine_miles() installed.");
 }
 

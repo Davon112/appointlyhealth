@@ -56,6 +56,7 @@ type SubmitBody = {
   preferredTimes?: string[];
   language?: string;
   clinicIds?: number[];
+  providerNpis?: string[];
   smsVerificationCode?: string;
   turnstileToken?: string;
   consent?: boolean;
@@ -113,6 +114,9 @@ export async function POST(req: NextRequest) {
   const clinicIds = Array.isArray(body.clinicIds)
     ? body.clinicIds.map(Number).filter((n) => Number.isInteger(n) && n > 0)
     : [];
+  const providerNpis = Array.isArray(body.providerNpis)
+    ? body.providerNpis.filter((s): s is string => typeof s === "string" && /^\d{10}$/.test(s))
+    : [];
   const emailRaw = body.email?.trim() || null;
   const smsCode = (body.smsVerificationCode ?? "").trim();
 
@@ -137,7 +141,8 @@ export async function POST(req: NextRequest) {
   for (const t of preferredTimes) {
     if (!ALLOWED_TIMES.has(t)) errors.push(`Invalid preferred time: ${t}`);
   }
-  if (clinicIds.length < 1 || clinicIds.length > 3) errors.push("Select 1–3 clinics");
+  const recipientCount = clinicIds.length + providerNpis.length;
+  if (recipientCount < 1 || recipientCount > 3) errors.push("Select 1–3 recipients (clinics and/or providers)");
   if (!body.consent) errors.push("You must accept the data-use consent to submit");
   if (body.consentVersion !== CONSENT_VERSION) errors.push("Consent has been updated — please reload the page");
 
@@ -166,7 +171,7 @@ export async function POST(req: NextRequest) {
 
   // ---------------- 4. Rate limit ----------------
   const phoneHash = hashPhone(phoneE164!);
-  const rl = await checkRateLimits({ phoneHash, clinicIds });
+  const rl = await checkRateLimits({ phoneHash, clinicIds, providerNpis });
   if (rl.kind === "phone_exceeded") {
     return NextResponse.json(
       {
@@ -183,14 +188,52 @@ export async function POST(req: NextRequest) {
       { status: 429 },
     );
   }
+  if (rl.kind === "provider_exceeded") {
+    return NextResponse.json(
+      {
+        error: `Provider ${rl.providerNpi} has received its daily intake cap from Appointly. Try again tomorrow.`,
+      },
+      { status: 429 },
+    );
+  }
 
-  // ---------------- 5. Load clinics ----------------
-  const clinicRows = await db
-    .select()
-    .from(schema.clinics)
-    .where(inArray(schema.clinics.id, clinicIds));
+  // ---------------- 5. Load recipients (clinics + providers) ----------------
+  const [clinicRows, providerRows] = await Promise.all([
+    clinicIds.length
+      ? db.select().from(schema.clinics).where(inArray(schema.clinics.id, clinicIds))
+      : Promise.resolve([]),
+    providerNpis.length
+      ? db
+          .select({
+            npi: schema.providers.npi,
+            firstName: schema.providers.firstName,
+            lastName: schema.providers.lastName,
+            organizationName: schema.providers.organizationName,
+            credential: schema.providers.credential,
+            phone: schema.providers.phone,
+            intakeEmail: schema.providers.intakeEmail,
+            addressLine1: schema.providerLocations.addressLine1,
+            city: schema.providerLocations.city,
+            state: schema.providerLocations.state,
+            zip: schema.providerLocations.zip,
+          })
+          .from(schema.providers)
+          .leftJoin(
+            schema.providerLocations,
+            eq(schema.providerLocations.npi, schema.providers.npi),
+          )
+          .where(inArray(schema.providers.npi, providerNpis))
+      : Promise.resolve([]),
+  ]);
   if (clinicRows.length !== clinicIds.length) {
     return NextResponse.json({ error: "One or more clinics not found" }, { status: 422 });
+  }
+  // providerRows can have N>1 rows per NPI if a provider has multiple
+  // locations — keep the first.
+  const providersByNpi = new Map<string, typeof providerRows[number]>();
+  for (const p of providerRows) if (!providersByNpi.has(p.npi)) providersByNpi.set(p.npi, p);
+  if (providersByNpi.size !== providerNpis.length) {
+    return NextResponse.json({ error: "One or more providers not found" }, { status: 422 });
   }
   const clinicsById = new Map(clinicRows.map((c) => [c.id, c]));
 
@@ -221,31 +264,87 @@ export async function POST(req: NextRequest) {
   }
 
   // ---------------- 7. Insert recipient rows + send emails ----------------
+  // Build a unified list (clinics first, then providers) so we send in a
+  // predictable order and the confirmation SMS lists names left-to-right.
+  type RecipientWork = {
+    kind: "clinic" | "provider";
+    clinicId: number | null;
+    providerNpi: string | null;
+    name: string;
+    addressLine1: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+    phone: string | null;
+    intakeEmail: string | null;
+  };
+  const recipientWork: RecipientWork[] = [
+    ...clinicIds.map((id): RecipientWork => {
+      const c = clinicsById.get(id)!;
+      return {
+        kind: "clinic",
+        clinicId: id,
+        providerNpi: null,
+        name: c.name,
+        addressLine1: c.addressLine1,
+        city: c.city,
+        state: c.state,
+        zip: c.zip,
+        phone: c.phone,
+        intakeEmail: c.intakeEmail,
+      };
+    }),
+    ...providerNpis.map((npi): RecipientWork => {
+      const p = providersByNpi.get(npi)!;
+      const personName = p.organizationName
+        ? p.organizationName
+        : `${p.firstName ?? ""} ${p.lastName ?? ""}${p.credential ? ", " + p.credential : ""}`.trim();
+      return {
+        kind: "provider",
+        clinicId: null,
+        providerNpi: npi,
+        name: personName,
+        addressLine1: p.addressLine1,
+        city: p.city,
+        state: p.state,
+        zip: p.zip,
+        phone: p.phone,
+        intakeEmail: p.intakeEmail,
+      };
+    }),
+  ];
+
   const deliveries: Array<{
-    clinic_id: number;
-    clinic_name: string;
+    kind: "clinic" | "provider";
+    id: number | string;
+    name: string;
     status: "sent" | "no_email" | "failed";
     error?: string;
   }> = [];
 
-  for (const clinicId of clinicIds) {
-    const clinic = clinicsById.get(clinicId)!;
+  for (const r of recipientWork) {
     const [recipient] = await db
       .insert(schema.appointmentRequestRecipients)
       .values({
         requestId: insertedRequest.id,
-        clinicId,
-        intakeEmail: clinic.intakeEmail,
+        clinicId: r.clinicId,
+        providerNpi: r.providerNpi,
+        intakeEmail: r.intakeEmail,
         status: "pending",
       })
       .returning();
 
-    if (!clinic.intakeEmail && !process.env.APPOINTMENT_REQUEST_TEST_RECIPIENT) {
+    if (!r.intakeEmail && !process.env.APPOINTMENT_REQUEST_TEST_RECIPIENT) {
       await db
         .update(schema.appointmentRequestRecipients)
-        .set({ status: "failed", lastError: "Clinic has no intake_email on file" })
+        .set({ status: "failed", lastError: `${r.kind === "clinic" ? "Clinic" : "Provider"} has no intake_email on file` })
         .where(eq(schema.appointmentRequestRecipients.id, recipient.id));
-      deliveries.push({ clinic_id: clinicId, clinic_name: clinic.name, status: "no_email" });
+      deliveries.push({
+        kind: r.kind,
+        id: r.clinicId ?? r.providerNpi!,
+        name: r.name,
+        status: "no_email",
+      });
       continue;
     }
 
@@ -260,16 +359,17 @@ export async function POST(req: NextRequest) {
         insuranceSituation,
         preferredTimes,
         language,
-        clinic: {
-          name: clinic.name,
-          addressLine1: clinic.addressLine1,
-          city: clinic.city,
-          state: clinic.state,
-          zip: clinic.zip,
-          phone: clinic.phone,
+        recipient: {
+          kind: r.kind,
+          name: r.name,
+          addressLine1: r.addressLine1,
+          city: r.city,
+          state: r.state,
+          zip: r.zip,
+          phone: r.phone,
         },
       },
-      clinic.intakeEmail,
+      r.intakeEmail,
     );
 
     if (sendOutcome.kind === "ok") {
@@ -281,19 +381,25 @@ export async function POST(req: NextRequest) {
           sentAt: new Date(),
         })
         .where(eq(schema.appointmentRequestRecipients.id, recipient.id));
-      deliveries.push({ clinic_id: clinicId, clinic_name: clinic.name, status: "sent" });
+      deliveries.push({
+        kind: r.kind,
+        id: r.clinicId ?? r.providerNpi!,
+        name: r.name,
+        status: "sent",
+      });
     } else {
       const errMsg =
         sendOutcome.kind === "no_key" ? "RESEND_API_KEY not set" :
-        sendOutcome.kind === "no_clinic_email" ? "No intake email and no test recipient" :
+        sendOutcome.kind === "no_recipient_email" ? "No intake email and no test recipient" :
         sendOutcome.message;
       await db
         .update(schema.appointmentRequestRecipients)
         .set({ status: "failed", lastError: errMsg })
         .where(eq(schema.appointmentRequestRecipients.id, recipient.id));
       deliveries.push({
-        clinic_id: clinicId,
-        clinic_name: clinic.name,
+        kind: r.kind,
+        id: r.clinicId ?? r.providerNpi!,
+        name: r.name,
         status: "failed",
         error: errMsg,
       });
@@ -313,12 +419,12 @@ export async function POST(req: NextRequest) {
 
   let smsSent = false;
   if (sentCount > 0) {
-    const clinicList = deliveries
+    const sentList = deliveries
       .filter((d) => d.status === "sent")
-      .map((d) => d.clinic_name)
+      .map((d) => d.name)
       .join(", ");
     const smsBody =
-      `Appointly: your appointment request was sent to ${clinicList}. ` +
+      `Appointly: your appointment request was sent to ${sentList}. ` +
       `They'll typically call you within 1–2 business days. Reply STOP to opt out.`;
     const sms = await sendAppointmentConfirmation(phoneE164!, smsBody);
     smsSent = sms.kind === "ok";

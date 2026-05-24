@@ -30,6 +30,12 @@ export const providers = pgTable(
     acceptingStatus: text("accepting_status").notNull().default("unknown"), // "yes" | "no" | "full" | "unknown"
     acceptingStatusUpdatedAt: timestamp("accepting_status_updated_at", { withTimezone: true }),
     acceptingStatusSource: text("accepting_status_source"), // "user_report" | "payer_feed" | "self_attested"
+    // Curated by hand. NPPES does not include provider intake email addresses,
+    // so this is NULL for every row loaded by etl-nppes.ts. When set, the
+    // appointment-request feature can email the provider directly. When NULL,
+    // the form falls back to APPOINTMENT_REQUEST_TEST_RECIPIENT (if set) or
+    // shows a "call directly" message.
+    intakeEmail: text("intake_email"),
     loadedAt: timestamp("loaded_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -166,8 +172,13 @@ export const appointmentRequests = pgTable(
 );
 
 /**
- * Per-clinic delivery row. One appointment_request → 1..3 recipient rows.
- * Retained forever — clinic_id + status + timestamps are not PHI.
+ * Per-recipient delivery row. One appointment_request → 1..3 recipient rows.
+ * A recipient is EITHER a clinic OR a provider — exactly one of clinicId /
+ * providerNpi is set per row. Retained forever; not PHI.
+ *
+ * Multi-clinic and provider routing share this table so cross-recipient
+ * analytics ("how many requests has this hospital received?") can join on
+ * either ID without a polymorphic union.
  */
 export const appointmentRequestRecipients = pgTable(
   "appointment_request_recipients",
@@ -176,10 +187,11 @@ export const appointmentRequestRecipients = pgTable(
     requestId: integer("request_id")
       .notNull()
       .references(() => appointmentRequests.id, { onDelete: "cascade" }),
-    clinicId: integer("clinic_id")
-      .notNull()
-      .references(() => clinics.id, { onDelete: "restrict" }),
-    intakeEmail: text("intake_email"), // snapshot of clinic's email at send time
+    // Exactly one of the two is set (enforced by Postgres CHECK constraint
+    // added in scripts/migrate.ts after Drizzle's CREATE TABLE).
+    clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "restrict" }),
+    providerNpi: text("provider_npi").references(() => providers.npi, { onDelete: "restrict" }),
+    intakeEmail: text("intake_email"), // snapshot of recipient's email at send time
     status: text("status").notNull().default("pending"), // pending | sent | delivered | failed
     providerMessageId: text("provider_message_id"), // Resend's message id, for tracebacks
     sentAt: timestamp("sent_at", { withTimezone: true }),
@@ -188,6 +200,7 @@ export const appointmentRequestRecipients = pgTable(
   (t) => ({
     requestIdx: index("arr_request_idx").on(t.requestId),
     clinicIdx: index("arr_clinic_idx").on(t.clinicId, t.sentAt),
+    providerIdx: index("arr_provider_idx").on(t.providerNpi, t.sentAt),
   }),
 );
 

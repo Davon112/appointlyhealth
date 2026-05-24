@@ -4,22 +4,42 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck, Loader2, AlertTriangle, MessageSquare, CheckCircle2, X } from "lucide-react";
 
-type ClinicSummary = {
-  id: number;
-  name: string;
-  addressLine1: string | null;
-  city: string | null;
-  state: string | null;
-  zip: string | null;
-  phone: string | null;
-  intakeEmail: string | null;
-};
+/**
+ * A recipient is either a clinic (FQHC) or an individual provider. Both
+ * shapes carry the same display fields; the `kind` discriminator + ID type
+ * tells the API which table to look up on the server.
+ */
+export type Recipient =
+  | {
+      kind: "clinic";
+      id: number;
+      name: string;
+      addressLine1: string | null;
+      city: string | null;
+      state: string | null;
+      zip: string | null;
+      phone: string | null;
+      intakeEmail: string | null;
+    }
+  | {
+      kind: "provider";
+      npi: string;
+      name: string;
+      addressLine1: string | null;
+      city: string | null;
+      state: string | null;
+      zip: string | null;
+      phone: string | null;
+      intakeEmail: string | null;
+    };
 
 type Props = {
-  clinics: ClinicSummary[];
+  recipients: Recipient[];
   smsIsStub: boolean;
   turnstileSiteKey: string | null;
   consentVersion: string;
+  /** When true, the form notes that emails are routed to the dev inbox. */
+  testRecipientActive: boolean;
 };
 
 type FormState = {
@@ -87,13 +107,14 @@ function formatPhone(raw: string): string {
 }
 
 export default function AppointmentRequestForm({
-  clinics,
+  recipients,
   smsIsStub,
   turnstileSiteKey,
   consentVersion,
+  testRecipientActive,
 }: Props) {
   const router = useRouter();
-  const [selected, setSelected] = useState<ClinicSummary[]>(clinics);
+  const [selected, setSelected] = useState<Recipient[]>(recipients);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [smsStep, setSmsStep] = useState<"idle" | "sent" | "verified">("idle");
   const [smsCode, setSmsCode] = useState("");
@@ -148,7 +169,16 @@ export default function AppointmentRequestForm({
         : [...f.preferredTimes, t],
     }));
   };
-  const removeClinic = (id: number) => setSelected((s) => s.filter((c) => c.id !== id));
+  const removeRecipient = (r: Recipient) =>
+    setSelected((s) =>
+      s.filter((x) =>
+        x.kind === "clinic" && r.kind === "clinic"
+          ? x.id !== r.id
+          : x.kind === "provider" && r.kind === "provider"
+          ? x.npi !== r.npi
+          : true,
+      ),
+    );
 
   // ---------- validation ----------
   const formErrors = useMemo(() => {
@@ -237,7 +267,8 @@ export default function AppointmentRequestForm({
           insuranceSituation: form.insuranceSituation,
           preferredTimes: form.preferredTimes,
           language: form.language,
-          clinicIds: selected.map((c) => c.id),
+          clinicIds: selected.filter((r): r is Extract<Recipient, { kind: "clinic" }> => r.kind === "clinic").map((r) => r.id),
+          providerNpis: selected.filter((r): r is Extract<Recipient, { kind: "provider" }> => r.kind === "provider").map((r) => r.npi),
           smsVerificationCode: smsCode,
           turnstileToken,
           consent: true,
@@ -267,33 +298,42 @@ export default function AppointmentRequestForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-8">
-      {/* Selected clinics */}
+      {/* Selected recipients */}
       <section className="bg-white border border-slate-200 rounded-xl p-5">
         <h2 className="text-sm font-semibold text-slate-900 mb-3">
-          Sending your request to {selected.length === 1 ? "this clinic" : `these ${selected.length} clinics`}:
+          Sending your request to {selected.length === 1 ? "this provider/clinic" : `these ${selected.length} recipients`}:
         </h2>
         <ul className="space-y-2">
-          {selected.map((c) => {
-            const addr = [c.addressLine1, c.city, c.state, c.zip].filter(Boolean).join(", ");
-            const reachable = !!c.intakeEmail;
+          {selected.map((r) => {
+            const addr = [r.addressLine1, r.city, r.state, r.zip].filter(Boolean).join(", ");
+            const reachable = !!r.intakeEmail || testRecipientActive;
+            const key = r.kind === "clinic" ? `c:${r.id}` : `p:${r.npi}`;
             return (
-              <li key={c.id} className="flex items-start justify-between gap-3 border border-slate-200 rounded-lg p-3">
+              <li key={key} className="flex items-start justify-between gap-3 border border-slate-200 rounded-lg p-3">
                 <div className="min-w-0">
-                  <div className="font-medium text-slate-900">{c.name}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium text-slate-900">{r.name}</div>
+                    <span className={
+                      "text-[10px] uppercase font-semibold tracking-wide px-1.5 py-0.5 rounded " +
+                      (r.kind === "clinic" ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700")
+                    }>
+                      {r.kind === "clinic" ? "Clinic" : "Provider"}
+                    </span>
+                  </div>
                   <div className="text-xs text-slate-500 truncate">{addr || "Address unavailable"}</div>
                   {!reachable && (
                     <div className="mt-1 text-xs text-amber-700 inline-flex items-center gap-1">
                       <AlertTriangle className="w-3.5 h-3.5" />
-                      No intake email on file. {c.phone ? `Please call ${c.phone}.` : "Cannot reach by email."}
+                      No intake email on file. {r.phone ? `Please call ${r.phone}.` : "Cannot reach by email."}
                     </div>
                   )}
                 </div>
                 {selected.length > 1 && (
                   <button
                     type="button"
-                    onClick={() => removeClinic(c.id)}
+                    onClick={() => removeRecipient(r)}
                     className="text-slate-400 hover:text-slate-700 flex-shrink-0"
-                    aria-label={`Remove ${c.name}`}
+                    aria-label={`Remove ${r.name}`}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -302,6 +342,11 @@ export default function AppointmentRequestForm({
             );
           })}
         </ul>
+        {testRecipientActive && (
+          <div className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            <strong>Dev mode:</strong> all requests are routed to the configured test inbox until <code className="font-mono">APPOINTMENT_REQUEST_TEST_RECIPIENT</code> is removed in production env.
+          </div>
+        )}
       </section>
 
       {/* Patient */}
@@ -532,7 +577,7 @@ export default function AppointmentRequestForm({
           <div className="text-sm text-amber-950 space-y-2">
             <p className="font-semibold">What happens to the info you just entered:</p>
             <ul className="list-disc list-inside space-y-1 text-amber-900">
-              <li>We send your name, date of birth, contact info, reason for visit, insurance situation, and preferred times to the clinic{selected.length > 1 ? "s" : ""} above — and nothing else.</li>
+              <li>We send your name, date of birth, contact info, reason for visit, insurance situation, and preferred times to the recipient{selected.length > 1 ? "s" : ""} above — and nothing else.</li>
               <li>Appointly does <strong>not</strong> keep this information. We delete it from our database within 24 hours of delivery.</li>
               <li>The clinic replies directly to your email (if provided) or calls you. We never see the conversation.</li>
               <li>You'll get a confirmation text once your request is sent.</li>
@@ -545,7 +590,7 @@ export default function AppointmentRequestForm({
                 className="mt-1 rounded border-amber-400 text-amber-700 focus:ring-amber-500"
               />
               <span className="font-medium text-amber-950">
-                I authorize Appointly to send this request to the selected clinic{selected.length > 1 ? "s" : ""}.
+                I authorize Appointly to send this request to the selected recipient{selected.length > 1 ? "s" : ""}.
               </span>
             </label>
           </div>

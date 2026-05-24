@@ -24,18 +24,26 @@ export default async function AppointmentRequestSentPage({
     redirect("/find-clinic");
   }
 
-  // Per-clinic delivery rows (joined to clinic name).
+  // Per-recipient delivery rows. A recipient is either a clinic OR a
+  // provider — we left-join both and pick whichever name is non-null.
   const recipients = await db
     .select({
       rid: schema.appointmentRequestRecipients.id,
       status: schema.appointmentRequestRecipients.status,
       sentAt: schema.appointmentRequestRecipients.sentAt,
       clinicId: schema.appointmentRequestRecipients.clinicId,
+      providerNpi: schema.appointmentRequestRecipients.providerNpi,
       clinicName: schema.clinics.name,
       clinicPhone: schema.clinics.phone,
+      providerFirstName: schema.providers.firstName,
+      providerLastName: schema.providers.lastName,
+      providerOrgName: schema.providers.organizationName,
+      providerCredential: schema.providers.credential,
+      providerPhone: schema.providers.phone,
     })
     .from(schema.appointmentRequestRecipients)
-    .innerJoin(schema.clinics, eq(schema.clinics.id, schema.appointmentRequestRecipients.clinicId))
+    .leftJoin(schema.clinics, eq(schema.clinics.id, schema.appointmentRequestRecipients.clinicId))
+    .leftJoin(schema.providers, eq(schema.providers.npi, schema.appointmentRequestRecipients.providerNpi))
     .where(eq(schema.appointmentRequestRecipients.requestId, id));
 
   const sentCount = recipients.filter((r) => r.status === "sent").length;
@@ -74,13 +82,26 @@ export default async function AppointmentRequestSentPage({
         <ul className="space-y-3">
           {recipients.map((r) => {
             const sentTs = r.sentAt ? new Date(r.sentAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+            const name = r.clinicName
+              ? r.clinicName
+              : r.providerOrgName
+              ? r.providerOrgName
+              : `${r.providerFirstName ?? ""} ${r.providerLastName ?? ""}${r.providerCredential ? ", " + r.providerCredential : ""}`.trim();
+            const phone = r.clinicPhone ?? r.providerPhone;
+            const kind = r.clinicId ? "Clinic" : "Provider";
             return (
               <li key={r.rid} className="flex flex-wrap items-start justify-between gap-3 border border-slate-200 rounded-lg p-3">
                 <div className="min-w-0">
-                  <div className="font-medium text-slate-900">{r.clinicName}</div>
-                  {r.clinicPhone && (
-                    <div className="text-xs text-slate-500">
-                      Or call: <a href={`tel:${r.clinicPhone}`} className="hover:underline">{r.clinicPhone}</a>
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium text-slate-900">{name}</div>
+                    <span className={
+                      "text-[10px] uppercase font-semibold tracking-wide px-1.5 py-0.5 rounded " +
+                      (r.clinicId ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700")
+                    }>{kind}</span>
+                  </div>
+                  {phone && (
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      Or call: <a href={`tel:${phone}`} className="hover:underline">{phone}</a>
                     </div>
                   )}
                 </div>

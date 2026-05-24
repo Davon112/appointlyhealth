@@ -27,8 +27,9 @@ export type AppointmentRequestEmailPayload = {
   insuranceSituation: string;
   preferredTimes: string[]; // canonical slugs
   language: string;
-  // Clinic
-  clinic: {
+  // Recipient (clinic or individual provider — display is identical)
+  recipient: {
+    kind: "clinic" | "provider";
     name: string;
     addressLine1: string | null;
     city: string | null;
@@ -115,7 +116,7 @@ function buildPlainText(p: AppointmentRequestEmailPayload): string {
   lines.push(`-- `);
   lines.push(`This message was sent via Appointly (appointlyhealth.org), a public-good`);
   lines.push(`tool that helps Kansas City patients reach primary care. We are not`);
-  lines.push(`affiliated with ${p.clinic.name}. Reference: request #${p.requestId}.`);
+  lines.push(`affiliated with ${p.recipient.name}. Reference: request #${p.requestId}.`);
   lines.push(`To opt out of future requests, reply STOP and we'll suppress this clinic.`);
   return lines.join("\n");
 }
@@ -179,7 +180,7 @@ function buildHtml(p: AppointmentRequestEmailPayload): string {
 <tr><td style="padding:0 28px 24px 28px;">
   <hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0 14px 0;" />
   <div style="font-size:12px;color:#64748b;line-height:1.5;">
-    Sent via <a href="https://appointlyhealth.org" style="color:#64748b;text-decoration:underline;">Appointly</a> — a public-good tool helping Kansas City patients reach primary care. We are not affiliated with ${e(p.clinic.name)}. Reference: request #${p.requestId}. To stop receiving these, reply with the word <strong>STOP</strong>.
+    Sent via <a href="https://appointlyhealth.org" style="color:#64748b;text-decoration:underline;">Appointly</a> — a public-good tool helping Kansas City patients reach primary care. We are not affiliated with ${e(p.recipient.name)}. Reference: request #${p.requestId}. To stop receiving these, reply with the word <strong>STOP</strong>.
   </div>
 </td></tr>
 </table>
@@ -193,21 +194,21 @@ function buildHtml(p: AppointmentRequestEmailPayload): string {
 export type SendOutcome =
   | { kind: "ok"; messageId: string; actualRecipient: string }
   | { kind: "no_key" }
-  | { kind: "no_clinic_email" }
+  | { kind: "no_recipient_email" }
   | { kind: "error"; message: string };
 
 export async function sendAppointmentRequestEmail(
   p: AppointmentRequestEmailPayload,
-  clinicIntakeEmail: string | null,
+  recipientIntakeEmail: string | null,
 ): Promise<SendOutcome> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return { kind: "no_key" };
 
   // Test-mode override: every email routes to this single address so we can
-  // dry-run the full flow without spamming clinics.
+  // dry-run the full flow without spamming real clinics or providers.
   const testRecipient = process.env.APPOINTMENT_REQUEST_TEST_RECIPIENT;
-  const toAddress = testRecipient || clinicIntakeEmail;
-  if (!toAddress) return { kind: "no_clinic_email" };
+  const toAddress = testRecipient || recipientIntakeEmail;
+  if (!toAddress) return { kind: "no_recipient_email" };
 
   const from = process.env.APPOINTMENT_REQUEST_FROM || "onboarding@resend.dev";
   const subject = buildSubject(p);
