@@ -11,16 +11,59 @@
  */
 
 /**
- * Strip the leading NPPES taxonomy code from a "207Q00000X Family Medicine"
- * style string, returning just the human-readable specialty.
- *   "207Q00000X Family Medicine"  →  "Family Medicine"
- *   "Family Medicine"             →  "Family Medicine" (no-op)
- *   ""                            →  null
+ * NPPES Healthcare Provider Taxonomy Code Set — minimal map for the
+ * primary-care codes Appointly's ETLs filter on. Source:
+ *   https://taxonomy.nucc.org/  (NUCC publishes the canonical mapping)
+ * Keys are the 10-char codes. Values are the human-readable label.
+ *
+ * Extend as we surface more specialties.
+ */
+const TAXONOMY_LABELS: Record<string, string> = {
+  // Allopathic & Osteopathic Physicians
+  "207Q00000X": "Family Medicine",
+  "207QA0000X": "Family Medicine — Adolescent Medicine",
+  "207QA0505X": "Family Medicine — Adult Medicine",
+  "207QG0300X": "Family Medicine — Geriatric Medicine",
+  "207R00000X": "Internal Medicine",
+  "207RA0000X": "Internal Medicine — Adolescent Medicine",
+  "207RG0300X": "Internal Medicine — Geriatric Medicine",
+  "208000000X": "Pediatrics",
+  "208D00000X": "General Practice",
+  // Nurse Practitioner / Clinical Nurse Specialist
+  "363LF0000X": "Family Nurse Practitioner",
+  "363LP2300X": "Primary Care Nurse Practitioner",
+  "363LA2200X": "Adult Health Nurse Practitioner",
+  "363LP0200X": "Pediatric Nurse Practitioner",
+  "364SF0001X": "Clinical Nurse Specialist — Family Health",
+  // Physician Assistant
+  "363A00000X": "Physician Assistant",
+  "363AM0700X": "Physician Assistant — Medical",
+  "363AS0400X": "Physician Assistant — Surgical",
+};
+
+/**
+ * Turn a raw NPPES `primary_taxonomy` field into a display string.
+ *   "207Q00000X"                  →  "Family Medicine"     (looked up)
+ *   "207Q00000X Family Medicine"  →  "Family Medicine"     (suffix stripped)
+ *   "Family Medicine"             →  "Family Medicine"     (no-op)
+ *   "999ZZZZZZX"                  →  "999ZZZZZZX"          (unknown code — return as-is)
+ *   null / ""                     →  null
  */
 export function cleanSpecialty(taxonomy: string | null | undefined): string | null {
   if (!taxonomy) return null;
-  // NPPES taxonomy codes: 9 chars + trailing X, all alphanumeric.
-  return taxonomy.replace(/^[0-9A-Z]{9}X\s+/, "").trim() || null;
+  const trimmed = taxonomy.trim();
+
+  // Format A: "{10-char code} {description}" — strip the prefix.
+  const withSuffix = trimmed.match(/^([0-9A-Z]{9}X)\s+(.+)$/);
+  if (withSuffix) return withSuffix[2].trim() || null;
+
+  // Format B: pure 10-char taxonomy code — look up in our label map.
+  if (/^[0-9A-Z]{9}X$/.test(trimmed)) {
+    return TAXONOMY_LABELS[trimmed] ?? trimmed;
+  }
+
+  // Anything else (already-human label, weird input) — pass through.
+  return trimmed || null;
 }
 
 /**
