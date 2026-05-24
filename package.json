@@ -10,21 +10,23 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
-    "db:reset": "rm -f appointly.db && npm run db:migrate && npm run db:seed",
+    "db:drop": "tsx scripts/drop.ts",
+    "db:reset": "tsx scripts/drop.ts --yes && npm run db:migrate && npm run db:seed",
     "etl:nppes": "tsx scripts/etl-nppes.ts",
     "etl:hrsa": "tsx scripts/etl-hrsa.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
+    "@types/pg": "^8.20.0",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.36.4",
     "lucide-react": "^0.469.0",
     "mapbox-gl": "^3.24.0",
     "next": "15.1.0",
+    "pg": "^8.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

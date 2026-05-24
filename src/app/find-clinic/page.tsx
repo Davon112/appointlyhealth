@@ -4,7 +4,7 @@ import { HeartHandshake, ExternalLink } from "lucide-react";
 import ClinicSearchForm from "@/components/ClinicSearchForm";
 import ClinicCard from "@/components/ClinicCard";
 import ResultMap from "@/components/ResultMap";
-import { rawSqlite } from "@/db";
+import { pgQuery } from "@/db";
 import { geocodeZip } from "@/lib/zip";
 import { boundingBox } from "@/lib/geo";
 
@@ -20,9 +20,9 @@ type ClinicRow = {
   zip: string | null;
   phone: string | null;
   services_offered: string | null;
-  is_fqhc: number | null;
-  is_look_alike: number | null;
-  sliding_fee_scale: number | null;
+  is_fqhc: boolean | null;
+  is_look_alike: boolean | null;
+  sliding_fee_scale: boolean | null;
   lat: number | null;
   lng: number | null;
   distance_miles: number | null;
@@ -63,19 +63,28 @@ async function runSearch(sp: {
   if (!geo) return { error: "Could not geocode that ZIP. Try a Kansas City metro ZIP like 64108, 66160, 66112, or 64111 — or set NEXT_PUBLIC_MAPBOX_TOKEN for nationwide coverage." };
 
   const bb = boundingBox(geo.lat, geo.lng, radius);
-  const fqhcClause = fqhcOnly ? `AND c.is_fqhc = 1` : "";
+  const fqhcClause = fqhcOnly ? `AND c.is_fqhc = true` : "";
 
-  // services_offered is a JSON-stringified array; SQLite has no JSON-array
-  // function in the default build, so we do a substring match on the raw
-  // text. The labels are slug-style ("primary_care", "dental") so collisions
-  // are unlikely.
-  const serviceClause =
-    service && service !== "any"
-      ? `AND c.services_offered LIKE ?`
-      : "";
+  // services_offered is a JSON-stringified array. Postgres has `?` jsonb
+  // operators, but we store as plain text — substring-match is fine since
+  // labels are slug-style ("primary_care", "dental") and collisions are
+  // unlikely.
   const serviceParam = service && service !== "any" ? `%"${service}"%` : null;
+  const params: Array<number | string> = [
+    geo.lat, geo.lng,           // $1, $2
+    bb.minLat, bb.maxLat,       // $3, $4
+    bb.minLng, bb.maxLng,       // $5, $6
+  ];
+  let serviceClause = "";
+  if (serviceParam) {
+    params.push(serviceParam);  // $7
+    serviceClause = `AND c.services_offered LIKE $7`;
+  }
+  const haversineLatIdx = params.length + 1;
+  const haversineLngIdx = haversineLatIdx + 1;
+  const radiusIdx = haversineLngIdx + 1;
+  params.push(geo.lat, geo.lng, radius);
 
-  const sqlite = rawSqlite();
   const sql = `
     SELECT
       c.id, c.hrsa_site_id, c.name,
@@ -83,25 +92,17 @@ async function runSearch(sp: {
       c.phone, c.services_offered,
       c.is_fqhc, c.is_look_alike, c.sliding_fee_scale,
       c.lat, c.lng,
-      haversine_miles(c.lat, c.lng, ?, ?) AS distance_miles
+      haversine_miles(c.lat, c.lng, $1, $2) AS distance_miles
     FROM clinics c
-    WHERE c.lat BETWEEN ? AND ?
-      AND c.lng BETWEEN ? AND ?
+    WHERE c.lat BETWEEN $3 AND $4
+      AND c.lng BETWEEN $5 AND $6
       ${fqhcClause}
       ${serviceClause}
-      AND haversine_miles(c.lat, c.lng, ?, ?) <= ?
+      AND haversine_miles(c.lat, c.lng, $${haversineLatIdx}, $${haversineLngIdx}) <= $${radiusIdx}
     ORDER BY distance_miles ASC
     LIMIT 50
   `;
-  const params: Array<number | string> = [
-    geo.lat, geo.lng,
-    bb.minLat, bb.maxLat,
-    bb.minLng, bb.maxLng,
-  ];
-  if (serviceParam) params.push(serviceParam);
-  params.push(geo.lat, geo.lng, radius);
-
-  const rows = sqlite.prepare(sql).all(...params) as ClinicRow[];
+  const rows = await pgQuery<ClinicRow>(sql, params);
 
   return {
     geo,

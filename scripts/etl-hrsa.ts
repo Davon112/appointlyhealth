@@ -32,31 +32,14 @@
  *   - lat/lng come from the HRSA file directly. Rows missing coordinates
  *     are skipped (and counted in skippedNoGeo).
  */
+// Load .env before any other import — required because src/db reads
+// process.env.DATABASE_URL at import time. tsx invocations don't auto-load
+// .env the way Next.js does.
+import "dotenv/config";
+
 import { createReadStream, existsSync, readFileSync } from "fs";
 import { createInterface } from "readline";
-
-// Load .env before importing anything that reads process.env. tsx invocations
-// don't auto-load .env the way Next.js does. HRSA itself doesn't need a token
-// (lat/lng come from the file), but keeping the loader in place is cheap and
-// avoids surprising the next person who adds a token-dependent step.
-function loadDotenv(envPath = ".env"): void {
-  if (!existsSync(envPath)) return;
-  for (const raw of readFileSync(envPath, "utf8").split("\n")) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = val;
-  }
-}
-loadDotenv();
-
-import { db, schema } from "../src/db";
+import { db, schema, pgPool } from "../src/db";
 
 // ----------------------- arg parsing --------------------------------------
 type Args = {
@@ -204,12 +187,22 @@ async function main() {
 
   const batch: Array<typeof schema.clinics.$inferInsert> = [];
 
-  function flush() {
+  async function flush() {
     if (!batch.length) return;
     if (!args.dryRun) {
+      // Dedupe by site ID inside a batch — Postgres rejects ON CONFLICT
+      // DO UPDATE if the same conflict target appears twice in one statement.
+      const seen = new Map<string, typeof batch[number]>();
       for (const row of batch) {
-        try {
-          db.insert(schema.clinics).values(row).onConflictDoUpdate({
+        if (row.hrsaSiteId) seen.set(row.hrsaSiteId, row);
+      }
+      const deduped = [...seen.values()];
+      try {
+        // sql.raw a column-list excluded-update so we don't have to repeat
+        // every column name — but Drizzle's API requires an explicit set.
+        // Two round trips per flush is fine; HRSA only has ~85 KC rows total.
+        for (const row of deduped) {
+          await db.insert(schema.clinics).values(row).onConflictDoUpdate({
             target: schema.clinics.hrsaSiteId,
             set: {
               name: row.name,
@@ -225,10 +218,10 @@ async function main() {
               isLookAlike: row.isLookAlike,
               slidingFeeScale: row.slidingFeeScale,
             },
-          }).run();
-        } catch {
-          // skip dupes / weird rows
+          });
         }
+      } catch (e) {
+        console.warn(`Clinic batch insert failed: ${(e as Error).message}`);
       }
     }
     inserted += batch.length;
@@ -336,9 +329,9 @@ async function main() {
       lat,
       lng,
     });
-    if (batch.length >= 100) flush();
+    if (batch.length >= 100) await flush();
   }
-  flush();
+  await flush();
 
   console.log(
     `\nDone. Read ${read} rows, matched ${matched}, inserted ${inserted}, ` +
@@ -349,7 +342,9 @@ async function main() {
   if (args.dryRun) console.log("(dry run — no rows written)");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => pgPool().end());

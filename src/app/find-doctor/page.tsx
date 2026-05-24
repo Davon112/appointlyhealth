@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import SearchForm from "@/components/SearchForm";
 import ProviderCard from "@/components/ProviderCard";
 import ResultMap from "@/components/ResultMap";
-import { rawSqlite } from "@/db";
+import { pgQuery } from "@/db";
 import { geocodeZip } from "@/lib/zip";
 import { boundingBox } from "@/lib/geo";
 
@@ -21,7 +21,7 @@ type SearchRow = {
   phone: string | null;
   languages: string | null;
   accepting_status: string;
-  accepting_status_updated_at: number | null;
+  accepting_status_updated_at: Date | null;
   accepting_status_source: string | null;
   address_line1: string | null;
   address_line2: string | null;
@@ -78,10 +78,22 @@ async function runSearch(sp: {
 
   const bb = boundingBox(geo.lat, geo.lng, radius);
   const specialties = specialty === "all_primary" ? ALL_PRIMARY : [specialty];
-  const placeholders = specialties.map(() => "?").join(",");
   const acceptingClause = acceptingOnly ? `AND p.accepting_status = 'yes'` : "";
 
-  const sqlite = rawSqlite();
+  // Build the parameter list and IN (...) placeholder list together so the
+  // $N numbering stays right as `specialties` changes length.
+  const params: Array<number | string> = [
+    geo.lat, geo.lng,           // $1, $2  — haversine SELECT
+    bb.minLat, bb.maxLat,       // $3, $4  — lat bbox
+    bb.minLng, bb.maxLng,       // $5, $6  — lng bbox
+    ...specialties,             // $7..$(6+N)
+    geo.lat, geo.lng, radius,   // $(7+N), $(8+N), $(9+N) — haversine WHERE
+  ];
+  const specialtyPlaceholders = specialties.map((_, i) => `$${7 + i}`).join(",");
+  const haversineLatIdx = 7 + specialties.length;
+  const haversineLngIdx = haversineLatIdx + 1;
+  const radiusIdx = haversineLngIdx + 1;
+
   const sql = `
     SELECT
       p.npi, p.first_name, p.last_name, p.organization_name,
@@ -89,27 +101,19 @@ async function runSearch(sp: {
       p.phone, p.languages,
       p.accepting_status, p.accepting_status_updated_at, p.accepting_status_source,
       l.address_line1, l.address_line2, l.city, l.state, l.zip, l.lat, l.lng,
-      haversine_miles(l.lat, l.lng, ?, ?) AS distance_miles
+      haversine_miles(l.lat, l.lng, $1, $2) AS distance_miles
     FROM provider_locations l
     JOIN providers p ON p.npi = l.npi
-    WHERE l.is_primary = 1
-      AND l.lat BETWEEN ? AND ?
-      AND l.lng BETWEEN ? AND ?
-      AND p.specialty_group IN (${placeholders})
+    WHERE l.is_primary = true
+      AND l.lat BETWEEN $3 AND $4
+      AND l.lng BETWEEN $5 AND $6
+      AND p.specialty_group IN (${specialtyPlaceholders})
       ${acceptingClause}
-      AND haversine_miles(l.lat, l.lng, ?, ?) <= ?
+      AND haversine_miles(l.lat, l.lng, $${haversineLatIdx}, $${haversineLngIdx}) <= $${radiusIdx}
     ORDER BY distance_miles ASC
     LIMIT 50
   `;
-  const rows = sqlite
-    .prepare(sql)
-    .all(
-      geo.lat, geo.lng,
-      bb.minLat, bb.maxLat,
-      bb.minLng, bb.maxLng,
-      ...specialties,
-      geo.lat, geo.lng, radius,
-    ) as SearchRow[];
+  const rows = await pgQuery<SearchRow>(sql, params);
 
   return {
     geo,
@@ -134,7 +138,7 @@ async function runSearch(sp: {
       accepting_patients: {
         status: r.accepting_status,
         last_verified_at: r.accepting_status_updated_at
-          ? new Date(r.accepting_status_updated_at * 1000).toISOString()
+          ? r.accepting_status_updated_at.toISOString()
           : null,
         source: r.accepting_status_source,
       },

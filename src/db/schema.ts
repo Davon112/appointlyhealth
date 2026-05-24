@@ -1,4 +1,13 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import {
+  pgTable,
+  text,
+  integer,
+  bigserial,
+  doublePrecision,
+  boolean,
+  timestamp,
+  index,
+} from "drizzle-orm/pg-core";
 
 /**
  * Providers — one row per NPI.
@@ -6,7 +15,7 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
  * `accepting_status` is denormalized for fast filtering; it's the latest
  * value from accepting_status_reports, updated on each verification.
  */
-export const providers = sqliteTable(
+export const providers = pgTable(
   "providers",
   {
     npi: text("npi").primaryKey(),
@@ -19,9 +28,9 @@ export const providers = sqliteTable(
     phone: text("phone"),
     languages: text("languages"), // JSON array stringified
     acceptingStatus: text("accepting_status").notNull().default("unknown"), // "yes" | "no" | "full" | "unknown"
-    acceptingStatusUpdatedAt: integer("accepting_status_updated_at", { mode: "timestamp" }),
+    acceptingStatusUpdatedAt: timestamp("accepting_status_updated_at", { withTimezone: true }),
     acceptingStatusSource: text("accepting_status_source"), // "user_report" | "payer_feed" | "self_attested"
-    loadedAt: integer("loaded_at", { mode: "timestamp" }).notNull(),
+    loadedAt: timestamp("loaded_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     specialtyIdx: index("providers_specialty_idx").on(t.specialtyGroup),
@@ -29,13 +38,14 @@ export const providers = sqliteTable(
 );
 
 /**
- * One provider can have multiple practice locations.
- * lat/lng stored as REAL; we hand-roll a Haversine UDF in JS for distance.
+ * One provider can have multiple practice locations. lat/lng stored as
+ * doublePrecision; geo queries bracket-filter on a btree index then
+ * sort by haversine_miles() — a PL/pgSQL function we ship as a migration.
  */
-export const providerLocations = sqliteTable(
+export const providerLocations = pgTable(
   "provider_locations",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: bigserial("id", { mode: "number" }).primaryKey(),
     npi: text("npi")
       .notNull()
       .references(() => providers.npi, { onDelete: "cascade" }),
@@ -44,9 +54,9 @@ export const providerLocations = sqliteTable(
     city: text("city"),
     state: text("state"),
     zip: text("zip"),
-    lat: real("lat"),
-    lng: real("lng"),
-    isPrimary: integer("is_primary", { mode: "boolean" }).default(false),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    isPrimary: boolean("is_primary").default(false),
   },
   (t) => ({
     npiIdx: index("provider_locations_npi_idx").on(t.npi),
@@ -59,17 +69,17 @@ export const providerLocations = sqliteTable(
  * Crowdsourced + payer-feed verifications of accepting-patients status.
  * Append-only. providers.accepting_status reflects the most recent row.
  */
-export const acceptingStatusReports = sqliteTable(
+export const acceptingStatusReports = pgTable(
   "accepting_status_reports",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: bigserial("id", { mode: "number" }).primaryKey(),
     npi: text("npi")
       .notNull()
       .references(() => providers.npi, { onDelete: "cascade" }),
     status: text("status").notNull(), // "yes" | "no" | "full" | "unknown"
     source: text("source").notNull(), // "user_report" | "payer_feed" | "self_attested"
     sourceDetail: text("source_detail"), // hashed IP, payer name, etc.
-    reportedAt: integer("reported_at", { mode: "timestamp" }).notNull(),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     npiIdx: index("asr_npi_reported_at_idx").on(t.npi, t.reportedAt),
@@ -80,10 +90,10 @@ export const acceptingStatusReports = sqliteTable(
  * HRSA Health Center Service Delivery Sites — FQHCs and look-alikes.
  * Refreshed quarterly. All rows are sliding-scale by federal requirement.
  */
-export const clinics = sqliteTable(
+export const clinics = pgTable(
   "clinics",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: bigserial("id", { mode: "number" }).primaryKey(),
     hrsaSiteId: text("hrsa_site_id").unique(),
     name: text("name").notNull(),
     addressLine1: text("address_line1"),
@@ -92,11 +102,11 @@ export const clinics = sqliteTable(
     zip: text("zip"),
     phone: text("phone"),
     servicesOffered: text("services_offered"), // JSON array
-    isFqhc: integer("is_fqhc", { mode: "boolean" }).default(false),
-    isLookAlike: integer("is_look_alike", { mode: "boolean" }).default(false),
-    slidingFeeScale: integer("sliding_fee_scale", { mode: "boolean" }).default(true),
-    lat: real("lat"),
-    lng: real("lng"),
+    isFqhc: boolean("is_fqhc").default(false),
+    isLookAlike: boolean("is_look_alike").default(false),
+    slidingFeeScale: boolean("sliding_fee_scale").default(true),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
   },
   (t) => ({
     geoIdx: index("clinics_geo_idx").on(t.lat, t.lng),
@@ -107,3 +117,7 @@ export type Provider = typeof providers.$inferSelect;
 export type ProviderLocation = typeof providerLocations.$inferSelect;
 export type AcceptingStatusReport = typeof acceptingStatusReports.$inferSelect;
 export type Clinic = typeof clinics.$inferSelect;
+
+// Note about `integer`: imported so future migrations can use it without
+// re-importing; keeps the drizzle generator's diff clean.
+export { integer };

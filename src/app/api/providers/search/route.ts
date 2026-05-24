@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { rawSqlite } from "@/db";
+import { pgQuery } from "@/db";
 import { geocodeZip } from "@/lib/zip";
 import { boundingBox } from "@/lib/geo";
 
@@ -24,7 +24,7 @@ type SearchRow = {
   phone: string | null;
   languages: string | null;
   accepting_status: string;
-  accepting_status_updated_at: number | null;
+  accepting_status_updated_at: Date | null;
   accepting_status_source: string | null;
   address_line1: string | null;
   address_line2: string | null;
@@ -63,17 +63,27 @@ export async function GET(req: NextRequest) {
   }
 
   const bb = boundingBox(geo.lat, geo.lng, radius);
-
-  // Build specialty filter
   const specialties = specialty === "all_primary" ? ALL_PRIMARY : [specialty];
-  const specialtyPlaceholders = specialties.map(() => "?").join(",");
-
-  // Build accepting filter
   const acceptingClause = acceptingOnly ? `AND p.accepting_status = 'yes'` : "";
 
-  const sqlite = rawSqlite();
+  // Build SELECT params: $1..$2 = haversine SELECT, $3..$6 = bbox,
+  // $7..$(6+N) = specialty IN list, $(7+N)..$(9+N) = haversine WHERE,
+  // $(10+N) = LIMIT, $(11+N) = OFFSET.
+  const selectParams: Array<number | string> = [
+    geo.lat, geo.lng,
+    bb.minLat, bb.maxLat,
+    bb.minLng, bb.maxLng,
+    ...specialties,
+    geo.lat, geo.lng, radius,
+    pageSize, (page - 1) * pageSize,
+  ];
+  const specialtyPlaceholders = specialties.map((_, i) => `$${7 + i}`).join(",");
+  const havLatIdx = 7 + specialties.length;
+  const havLngIdx = havLatIdx + 1;
+  const radiusIdx = havLngIdx + 1;
+  const limitIdx = radiusIdx + 1;
+  const offsetIdx = limitIdx + 1;
 
-  // One pass: filter by specialty + bounding box + accepting; sort by haversine.
   const sql = `
     SELECT
       p.npi, p.first_name, p.last_name, p.organization_name,
@@ -81,50 +91,47 @@ export async function GET(req: NextRequest) {
       p.phone, p.languages,
       p.accepting_status, p.accepting_status_updated_at, p.accepting_status_source,
       l.address_line1, l.address_line2, l.city, l.state, l.zip, l.lat, l.lng,
-      haversine_miles(l.lat, l.lng, ?, ?) AS distance_miles
+      haversine_miles(l.lat, l.lng, $1, $2) AS distance_miles
     FROM provider_locations l
     JOIN providers p ON p.npi = l.npi
-    WHERE l.is_primary = 1
-      AND l.lat BETWEEN ? AND ?
-      AND l.lng BETWEEN ? AND ?
+    WHERE l.is_primary = true
+      AND l.lat BETWEEN $3 AND $4
+      AND l.lng BETWEEN $5 AND $6
       AND p.specialty_group IN (${specialtyPlaceholders})
       ${acceptingClause}
-      AND haversine_miles(l.lat, l.lng, ?, ?) <= ?
+      AND haversine_miles(l.lat, l.lng, $${havLatIdx}, $${havLngIdx}) <= $${radiusIdx}
     ORDER BY distance_miles ASC
-    LIMIT ? OFFSET ?
+    LIMIT $${limitIdx} OFFSET $${offsetIdx}
   `;
 
+  // Count query — same WHERE shape, but no LIMIT/OFFSET, no SELECT haversine.
+  // $1..$4 = bbox, $5..$(4+N) = specialty IN, $(5+N)..$(7+N) = haversine WHERE.
+  const countParams: Array<number | string> = [
+    bb.minLat, bb.maxLat,
+    bb.minLng, bb.maxLng,
+    ...specialties,
+    geo.lat, geo.lng, radius,
+  ];
+  const cSpecPlaceholders = specialties.map((_, i) => `$${5 + i}`).join(",");
+  const cHavLat = 5 + specialties.length;
+  const cHavLng = cHavLat + 1;
+  const cRadius = cHavLng + 1;
   const countSql = `
-    SELECT COUNT(*) AS n
+    SELECT COUNT(*)::int AS n
     FROM provider_locations l
     JOIN providers p ON p.npi = l.npi
-    WHERE l.is_primary = 1
-      AND l.lat BETWEEN ? AND ?
-      AND l.lng BETWEEN ? AND ?
-      AND p.specialty_group IN (${specialtyPlaceholders})
+    WHERE l.is_primary = true
+      AND l.lat BETWEEN $1 AND $2
+      AND l.lng BETWEEN $3 AND $4
+      AND p.specialty_group IN (${cSpecPlaceholders})
       ${acceptingClause}
-      AND haversine_miles(l.lat, l.lng, ?, ?) <= ?
+      AND haversine_miles(l.lat, l.lng, $${cHavLat}, $${cHavLng}) <= $${cRadius}
   `;
 
-  const rows = sqlite
-    .prepare(sql)
-    .all(
-      geo.lat, geo.lng,
-      bb.minLat, bb.maxLat,
-      bb.minLng, bb.maxLng,
-      ...specialties,
-      geo.lat, geo.lng, radius,
-      pageSize, (page - 1) * pageSize,
-    ) as SearchRow[];
-
-  const countRow = sqlite
-    .prepare(countSql)
-    .get(
-      bb.minLat, bb.maxLat,
-      bb.minLng, bb.maxLng,
-      ...specialties,
-      geo.lat, geo.lng, radius,
-    ) as { n: number };
+  const [rows, countRows] = await Promise.all([
+    pgQuery<SearchRow>(sql, selectParams),
+    pgQuery<{ n: number }>(countSql, countParams),
+  ]);
 
   const results = rows.map((r) => ({
     npi: r.npi,
@@ -148,7 +155,7 @@ export async function GET(req: NextRequest) {
     accepting_patients: {
       status: r.accepting_status,
       last_verified_at: r.accepting_status_updated_at
-        ? new Date(r.accepting_status_updated_at * 1000).toISOString()
+        ? r.accepting_status_updated_at.toISOString()
         : null,
       source: r.accepting_status_source,
     },
@@ -158,7 +165,7 @@ export async function GET(req: NextRequest) {
     query: { zip, radius_miles: radius, specialty, accepting_only: acceptingOnly },
     origin: { lat: geo.lat, lng: geo.lng, source: geo.source },
     results,
-    total: countRow.n,
+    total: countRows[0]?.n ?? 0,
     page,
     page_size: pageSize,
   });

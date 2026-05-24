@@ -12,7 +12,8 @@
  *
  * Run:  npm run db:seed   (after db:migrate)
  */
-import { db, schema } from "../src/db";
+import "dotenv/config";
+import { db, schema, pgPool } from "../src/db";
 import { sql } from "drizzle-orm";
 
 // --- Deterministic PRNG so reseeds are stable ------------------------------
@@ -269,17 +270,26 @@ const clinicRows: Array<typeof schema.clinics.$inferInsert> = [
 ];
 
 // --- Wipe + insert ---------------------------------------------------------
-console.log(`Seeding ${providerRows.length} providers and ${clinicRows.length} clinics across the Kansas City metro...`);
-db.run(sql`DELETE FROM accepting_status_reports`);
-db.run(sql`DELETE FROM provider_locations`);
-db.run(sql`DELETE FROM providers`);
-db.run(sql`DELETE FROM clinics`);
+async function main() {
+  console.log(`Seeding ${providerRows.length} providers and ${clinicRows.length} clinics across the Kansas City metro...`);
+  await db.execute(sql`DELETE FROM accepting_status_reports`);
+  await db.execute(sql`DELETE FROM provider_locations`);
+  await db.execute(sql`DELETE FROM providers`);
+  await db.execute(sql`DELETE FROM clinics`);
 
-db.insert(schema.providers).values(providerRows).run();
-db.insert(schema.providerLocations).values(locationRows).run();
-if (reportRows.length) {
-  db.insert(schema.acceptingStatusReports).values(reportRows).run();
+  await db.insert(schema.providers).values(providerRows);
+  await db.insert(schema.providerLocations).values(locationRows);
+  if (reportRows.length) {
+    await db.insert(schema.acceptingStatusReports).values(reportRows);
+  }
+  await db.insert(schema.clinics).values(clinicRows);
+
+  console.log(`Done. ${providerRows.length} providers, ${locationRows.length} locations, ${reportRows.length} status reports, ${clinicRows.length} clinics.`);
 }
-db.insert(schema.clinics).values(clinicRows).run();
 
-console.log(`Done. ${providerRows.length} providers, ${locationRows.length} locations, ${reportRows.length} status reports, ${clinicRows.length} clinics.`);
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => pgPool().end());

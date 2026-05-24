@@ -38,34 +38,17 @@
  *   - Be a good citizen: keep `--limit` reasonable on first runs.
  *   - Running on the full file takes 30-90 min depending on geocode budget.
  */
+// Load .env before any other import — required because src/db reads
+// process.env.DATABASE_URL at import time. tsx invocations don't auto-load
+// .env the way Next.js does.
+import "dotenv/config";
+
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { pipeline } from "stream/promises";
 import { Transform } from "stream";
 import { createInterface } from "readline";
 import path from "path";
-
-// Load .env BEFORE importing anything that reads process.env. Next.js loads
-// .env automatically; plain `tsx scripts/etl-nppes.ts` does not. Without
-// this, NEXT_PUBLIC_MAPBOX_TOKEN is undefined and the geocode helper bails
-// silently on every row.
-function loadDotenv(envPath = ".env"): void {
-  if (!existsSync(envPath)) return;
-  for (const raw of readFileSync(envPath, "utf8").split("\n")) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = val;
-  }
-}
-loadDotenv();
-
-import { db, schema } from "../src/db";
+import { db, schema, pgPool } from "../src/db";
 import { sql } from "drizzle-orm";
 
 // ----------------------- arg parsing --------------------------------------
@@ -260,15 +243,37 @@ async function main() {
   async function flush() {
     if (!batch.length) return;
     if (!args.dryRun) {
-      for (const { provider, location } of batch) {
-        try {
-          db.insert(schema.providers).values(provider).onConflictDoUpdate({
-            target: schema.providers.npi,
-            set: { loadedAt: now },
-          }).run();
-          db.insert(schema.providerLocations).values(location).run();
-        } catch (e) {
-          // duplicate location row etc — skip and continue.
+      // Postgres errors on `ON CONFLICT DO UPDATE` if a batch contains the
+      // same conflict target twice. Dedupe by NPI, keeping the last entry.
+      const seen = new Map<string, typeof batch[number]>();
+      for (const item of batch) seen.set(item.provider.npi, item);
+      const deduped = [...seen.values()];
+      const providerRows = deduped.map((b) => b.provider);
+      const locationRows = deduped.map((b) => b.location);
+      try {
+        // Batched inserts — two round trips per flush regardless of size.
+        // Critical on a hosted Postgres (Neon, RDS) where each round trip
+        // is 50-200ms over HTTPS. Per-row inserts would push this ETL to
+        // 30+ minutes per state; batches keep it under 5 min.
+        await db.insert(schema.providers).values(providerRows).onConflictDoUpdate({
+          target: schema.providers.npi,
+          set: { loadedAt: now },
+        });
+        await db.insert(schema.providerLocations).values(locationRows);
+      } catch (e) {
+        // Single-row error in a batch shouldn't sink the whole batch.
+        // Fall back to row-by-row so we lose at most one row.
+        console.warn(`Batch insert failed (${(e as Error).message}); retrying row-by-row...`);
+        for (const { provider, location } of batch) {
+          try {
+            await db.insert(schema.providers).values(provider).onConflictDoUpdate({
+              target: schema.providers.npi,
+              set: { loadedAt: now },
+            });
+            await db.insert(schema.providerLocations).values(location);
+          } catch {
+            // skip the bad row
+          }
         }
       }
     }
@@ -373,7 +378,9 @@ async function main() {
   if (args.dryRun) console.log("(dry run — no rows written)");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => pgPool().end());
