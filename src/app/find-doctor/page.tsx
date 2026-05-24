@@ -32,12 +32,38 @@ type SearchRow = {
   distance_miles: number | null;
 };
 
+type SearchError = { error: string };
+type SearchResultItem = {
+  npi: string;
+  name: string;
+  specialty: string | null;
+  phone: string | null;
+  languages: string[];
+  address: {
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+  };
+  distance_miles: number | null;
+  accepting_patients: {
+    status: string;
+    last_verified_at: string | null;
+    source: string | null;
+  };
+};
+type SearchSuccess = {
+  geo: { lat: number; lng: number };
+  results: SearchResultItem[];
+};
+
 async function runSearch(sp: {
   zip?: string;
   radius_miles?: string;
   specialty?: string;
   accepting_only?: string;
-}) {
+}): Promise<null | SearchError | SearchSuccess> {
   const zip = sp.zip?.trim();
   if (!zip) return null;
   const radius = Math.min(Math.max(Number(sp.radius_miles ?? 10), 1), 50);
