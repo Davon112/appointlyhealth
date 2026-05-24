@@ -31,6 +31,9 @@ Thumbs.db
 .vscode
 .idea
 
+# claude code local config
+.claude/settings.local.json
+
 # ts
 *.tsbuildinfo
 next-env.d.ts

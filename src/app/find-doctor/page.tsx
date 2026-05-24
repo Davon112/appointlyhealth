@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import SearchForm from "@/components/SearchForm";
 import ProviderCard from "@/components/ProviderCard";
+import ResultMap from "@/components/ResultMap";
 import { rawSqlite } from "@/db";
 import { geocodeZip } from "@/lib/zip";
 import { boundingBox } from "@/lib/geo";
@@ -46,6 +47,8 @@ type SearchResultItem = {
     state: string | null;
     zip: string | null;
   };
+  lat: number | null;
+  lng: number | null;
   distance_miles: number | null;
   accepting_patients: {
     status: string;
@@ -125,6 +128,8 @@ async function runSearch(sp: {
         state: r.state,
         zip: r.zip,
       },
+      lat: r.lat,
+      lng: r.lng,
       distance_miles: r.distance_miles == null ? null : Math.round(r.distance_miles * 10) / 10,
       accepting_patients: {
         status: r.accepting_status,
@@ -150,8 +155,21 @@ export default async function FindDoctorPage({
   const sp = await searchParams;
   const searched = await runSearch(sp);
 
+  const mapPoints =
+    searched && "results" in searched
+      ? searched.results
+          .filter((r): r is SearchResultItem & { lat: number; lng: number } => r.lat != null && r.lng != null)
+          .map((r) => ({
+            id: r.npi,
+            lat: r.lat,
+            lng: r.lng,
+            label: r.name,
+            href: `/find-doctor/${r.npi}`,
+          }))
+      : [];
+
   return (
-    <div className="max-w-5xl mx-auto px-4 py-10">
+    <div className="max-w-7xl mx-auto px-4 py-10">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Find a doctor near you</h1>
         <p className="mt-2 text-slate-600">
@@ -178,28 +196,35 @@ export default async function FindDoctorPage({
         )}
 
         {searched && "results" in searched && (
-          <>
-            <p className="text-sm text-slate-600 mb-4">
-              {searched.results.length === 0
-                ? "No providers found in this area."
-                : `${searched.results.length} provider${searched.results.length === 1 ? "" : "s"} found, sorted by distance.`}
-            </p>
-            <ul className="space-y-4">
-              {searched.results.map((r) => (
-                <ProviderCard key={r.npi} r={r} />
-              ))}
-            </ul>
-            {searched.results.length === 0 && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-sm text-slate-700 mt-4">
-                <p className="font-medium mb-2">Try one of these:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Widen the radius (currently {sp.radius_miles ?? 10} miles)</li>
-                  <li>Uncheck "accepting new patients only"</li>
-                  <li>Try a KC-metro ZIP: 64108, 66160, 66112, or 64111</li>
-                </ul>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7">
+              <p className="text-sm text-slate-600 mb-4">
+                {searched.results.length === 0
+                  ? "No providers found in this area."
+                  : `${searched.results.length} provider${searched.results.length === 1 ? "" : "s"} found, sorted by distance.`}
+              </p>
+              <ul className="space-y-4">
+                {searched.results.map((r) => (
+                  <ProviderCard key={r.npi} r={r} />
+                ))}
+              </ul>
+              {searched.results.length === 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-sm text-slate-700 mt-4">
+                  <p className="font-medium mb-2">Try one of these:</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Widen the radius (currently {sp.radius_miles ?? 10} miles)</li>
+                    <li>Uncheck "accepting new patients only"</li>
+                    <li>Try a KC-metro ZIP: 64108, 66160, 66112, or 64111</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="lg:col-span-5">
+              <div className="lg:sticky lg:top-6">
+                <ResultMap center={searched.geo} points={mapPoints} />
               </div>
-            )}
-          </>
+            </div>
+          </div>
         )}
       </div>
     </div>

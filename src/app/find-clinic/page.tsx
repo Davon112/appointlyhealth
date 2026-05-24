@@ -3,6 +3,7 @@ import Link from "next/link";
 import { HeartHandshake, ExternalLink } from "lucide-react";
 import ClinicSearchForm from "@/components/ClinicSearchForm";
 import ClinicCard from "@/components/ClinicCard";
+import ResultMap from "@/components/ResultMap";
 import { rawSqlite } from "@/db";
 import { geocodeZip } from "@/lib/zip";
 import { boundingBox } from "@/lib/geo";
@@ -138,8 +139,20 @@ export default async function FindClinicPage({
   const sp = await searchParams;
   const searched = await runSearch(sp);
 
+  const mapPoints =
+    searched && "results" in searched
+      ? searched.results
+          .filter((c): c is ClinicResultItem & { lat: number; lng: number } => c.lat != null && c.lng != null)
+          .map((c) => ({
+            id: c.id,
+            lat: c.lat,
+            lng: c.lng,
+            label: c.name,
+          }))
+      : [];
+
   return (
-    <div className="max-w-5xl mx-auto px-4 py-10">
+    <div className="max-w-7xl mx-auto px-4 py-10">
       <div className="mb-8">
         <div className="flex items-center gap-3">
           <HeartHandshake className="w-8 h-8 text-brand-600" />
@@ -169,28 +182,35 @@ export default async function FindClinicPage({
         )}
 
         {searched && "results" in searched && (
-          <>
-            <p className="text-sm text-slate-600 mb-4">
-              {searched.results.length === 0
-                ? "No sliding-scale clinics found in this area."
-                : `${searched.results.length} clinic${searched.results.length === 1 ? "" : "s"} found, sorted by distance.`}
-            </p>
-            <ul className="space-y-4">
-              {searched.results.map((c) => (
-                <ClinicCard key={c.id} c={c} />
-              ))}
-            </ul>
-            {searched.results.length === 0 && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-sm text-slate-700 mt-4">
-                <p className="font-medium mb-2">Try one of these:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Widen the radius (currently {sp.radius_miles ?? 10} miles)</li>
-                  <li>Uncheck "FQHC only" or "Any service"</li>
-                  <li>Try a KC-metro ZIP: 64108, 66160, 66112, or 64111</li>
-                </ul>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7">
+              <p className="text-sm text-slate-600 mb-4">
+                {searched.results.length === 0
+                  ? "No sliding-scale clinics found in this area."
+                  : `${searched.results.length} clinic${searched.results.length === 1 ? "" : "s"} found, sorted by distance.`}
+              </p>
+              <ul className="space-y-4">
+                {searched.results.map((c) => (
+                  <ClinicCard key={c.id} c={c} />
+                ))}
+              </ul>
+              {searched.results.length === 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-sm text-slate-700 mt-4">
+                  <p className="font-medium mb-2">Try one of these:</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Widen the radius (currently {sp.radius_miles ?? 10} miles)</li>
+                    <li>Uncheck "FQHC only" or "Any service"</li>
+                    <li>Try a KC-metro ZIP: 64108, 66160, 66112, or 64111</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="lg:col-span-5">
+              <div className="lg:sticky lg:top-6">
+                <ResultMap center={searched.geo} points={mapPoints} />
               </div>
-            )}
-          </>
+            </div>
+          </div>
         )}
       </div>
 
