@@ -1,0 +1,35 @@
+node_modules
+.next
+.trash
+.trash-broken
+.qodo
+out
+build
+dist
+
+# env
+.env
+.env.local
+.env.*.local
+
+# db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+drizzle/*.snapshot.json
+!drizzle/meta/
+nppes_pfile.csv
+nppes_download/
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode
+.idea
+
+# ts
+*.tsbuildinfo
+next-env.d.ts
