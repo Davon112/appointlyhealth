@@ -1,4 +1,5 @@
-import { MapPin, Phone, BadgeCheck, Car } from "lucide-react";
+import Link from "next/link";
+import { MapPin, Phone, BadgeCheck, Car, CalendarPlus } from "lucide-react";
 
 type Clinic = {
   id: number;
@@ -100,16 +101,22 @@ export default function ClinicCard({ c }: { c: Clinic }) {
         </div>
       )}
 
-      {rideHref && (
-        <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Link
+          href={`/request-appointment?clinic_id=${c.id}`}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700"
+        >
+          <CalendarPlus className="w-4 h-4" /> Request appointment
+        </Link>
+        {rideHref && (
           <a
             href={rideHref}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:underline"
           >
             <Car className="w-4 h-4" /> Get a ride here
           </a>
-        </div>
-      )}
+        )}
+      </div>
     </li>
   );
 }

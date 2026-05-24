@@ -13,7 +13,8 @@
     "db:drop": "tsx scripts/drop.ts",
     "db:reset": "tsx scripts/drop.ts --yes && npm run db:migrate && npm run db:seed",
     "etl:nppes": "tsx scripts/etl-nppes.ts",
-    "etl:hrsa": "tsx scripts/etl-hrsa.ts"
+    "etl:hrsa": "tsx scripts/etl-hrsa.ts",
+    "cleanup-phi": "tsx scripts/cleanup-phi.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
@@ -24,7 +25,8 @@
     "next": "^15.5.18",
     "pg": "^8.21.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "resend": "^6.12.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
