@@ -25,6 +25,9 @@ export default function Home() {
           appointment. Pick up your prescription on the way home. All in one
           place.
         </p>
+        <p className="mt-3 text-sm font-medium text-slate-500">
+          Serving the Kansas City metro.
+        </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link
             href="/find-doctor"

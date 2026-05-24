@@ -1,12 +1,14 @@
 /**
  * Seed Appointly's local SQLite DB with synthetic-but-realistic
- * primary-care providers in Austin, Atlanta, and Chicago.
+ * primary-care providers in the Kansas City metro (MO + KS sides of the MSA).
  *
  * IMPORTANT: all NPIs in this file are synthetic — they begin with "9",
  * which is outside the range CMS issues to real providers (real NPIs
  * start with "1" or "2"). Phone numbers use the 555-01xx reserved
- * fictional range. Addresses are real street addresses of medical
- * buildings; the providers themselves are not real.
+ * fictional range. Addresses are real street addresses of KC-area
+ * medical buildings (Truman/University Health, KU Med, Children's Mercy,
+ * Swope Health, Samuel U. Rodgers, KC CARE, and a handful of suburban
+ * anchors); the providers themselves are not real.
  *
  * Run:  npm run db:seed   (after db:migrate)
  */
@@ -48,41 +50,43 @@ const TAXONOMIES = [
   { code: "363LP2300X", desc: "Primary Care NP",     group: "primary_care",      credential: "NP" },
 ] as const;
 
-// --- Address pools per metro (real medical-building streets) --------------
+// --- KC-metro address pool (real medical-building streets) ----------------
+// Spans Jackson, Clay, Cass MO counties and Johnson, Wyandotte KS counties —
+// the inner-core + close-suburb subset of the 14-county KC MSA.
 type Addr = { line1: string; city: string; state: string; zip: string; lat: number; lng: number };
-const AUSTIN: Addr[] = [
-  { line1: "1313 Red River St", city: "Austin", state: "TX", zip: "78701", lat: 30.2740, lng: -97.7350 },
-  { line1: "601 E 15th St",      city: "Austin", state: "TX", zip: "78701", lat: 30.2774, lng: -97.7380 },
-  { line1: "2911 Medical Arts St", city: "Austin", state: "TX", zip: "78705", lat: 30.2934, lng: -97.7344 },
-  { line1: "3833 S 1st St",      city: "Austin", state: "TX", zip: "78704", lat: 30.2249, lng: -97.7665 },
-  { line1: "5625 Eiers Rd",      city: "Austin", state: "TX", zip: "78745", lat: 30.2070, lng: -97.8025 },
-  { line1: "12221 N Mopac Expy", city: "Austin", state: "TX", zip: "78758", lat: 30.4144, lng: -97.7032 },
-  { line1: "11645 Angus Rd",     city: "Austin", state: "TX", zip: "78759", lat: 30.4112, lng: -97.7551 },
-];
-const ATLANTA: Addr[] = [
-  { line1: "80 Jesse Hill Jr Dr SE",   city: "Atlanta", state: "GA", zip: "30303", lat: 33.7530, lng: -84.3812 },
-  { line1: "550 Peachtree St NE",      city: "Atlanta", state: "GA", zip: "30308", lat: 33.7720, lng: -84.3837 },
-  { line1: "1968 Peachtree Rd NW",     city: "Atlanta", state: "GA", zip: "30309", lat: 33.7976, lng: -84.3879 },
-  { line1: "201 Edgewood Ave SE",      city: "Atlanta", state: "GA", zip: "30303", lat: 33.7540, lng: -84.3829 },
-  { line1: "1335 Hardee St NE",        city: "Atlanta", state: "GA", zip: "30307", lat: 33.7693, lng: -84.3358 },
-  { line1: "100 Edgewood Ave NE",      city: "Atlanta", state: "GA", zip: "30303", lat: 33.7544, lng: -84.3870 },
-  { line1: "1255 Cleveland Ave",       city: "East Point", state: "GA", zip: "30344", lat: 33.6739, lng: -84.4404 },
-];
-const CHICAGO: Addr[] = [
-  { line1: "1740 W Taylor St",         city: "Chicago", state: "IL", zip: "60612", lat: 41.8696, lng: -87.6699 },
-  { line1: "251 E Huron St",           city: "Chicago", state: "IL", zip: "60611", lat: 41.8949, lng: -87.6212 },
-  { line1: "5841 S Maryland Ave",      city: "Chicago", state: "IL", zip: "60637", lat: 41.7886, lng: -87.6047 },
-  { line1: "1900 W Polk St",           city: "Chicago", state: "IL", zip: "60612", lat: 41.8716, lng: -87.6736 },
-  { line1: "1407 N Milwaukee Ave",     city: "Chicago", state: "IL", zip: "60622", lat: 41.9081, lng: -87.6790 },
-  { line1: "851 W Belmont Ave",        city: "Chicago", state: "IL", zip: "60657", lat: 41.9396, lng: -87.6520 },
-  { line1: "836 W Wellington Ave",     city: "Chicago", state: "IL", zip: "60657", lat: 41.9367, lng: -87.6512 },
+const KC_METRO: Addr[] = [
+  // MO side — Hospital Hill / urban core
+  { line1: "2301 Holmes St",          city: "Kansas City", state: "MO", zip: "64108", lat: 39.0859, lng: -94.5747 },
+  { line1: "2401 Gillham Rd",         city: "Kansas City", state: "MO", zip: "64108", lat: 39.0866, lng: -94.5793 },
+  { line1: "3801 Blue Pkwy",          city: "Kansas City", state: "MO", zip: "64130", lat: 39.0331, lng: -94.5316 },
+  { line1: "825 Euclid Ave",          city: "Kansas City", state: "MO", zip: "64124", lat: 39.1083, lng: -94.5527 },
+  { line1: "3515 Broadway Blvd",      city: "Kansas City", state: "MO", zip: "64111", lat: 39.0628, lng: -94.5894 },
+  { line1: "4401 Wornall Rd",         city: "Kansas City", state: "MO", zip: "64111", lat: 39.0432, lng: -94.5910 },
+  { line1: "2316 E Meyer Blvd",       city: "Kansas City", state: "MO", zip: "64132", lat: 39.0214, lng: -94.5650 },
+  // MO side — suburbs
+  { line1: "7900 Lee's Summit Rd",    city: "Kansas City", state: "MO", zip: "64139", lat: 39.0136, lng: -94.4138 },
+  { line1: "19600 E 39th St S",       city: "Independence", state: "MO", zip: "64057", lat: 39.0589, lng: -94.3650 },
+  { line1: "17065 S 71 Hwy",          city: "Belton",      state: "MO", zip: "64012", lat: 38.8265, lng: -94.5246 },
+  { line1: "2525 Glenn Hendren Dr",   city: "Liberty",     state: "MO", zip: "64068", lat: 39.2350, lng: -94.4181 },
+  // KS side — Wyandotte / Johnson
+  { line1: "4000 Cambridge St",       city: "Kansas City", state: "KS", zip: "66160", lat: 39.0570, lng: -94.6080 },
+  { line1: "3901 Rainbow Blvd",       city: "Kansas City", state: "KS", zip: "66160", lat: 39.0555, lng: -94.6094 },
+  { line1: "5808 W 110th St",         city: "Overland Park", state: "KS", zip: "66211", lat: 38.9272, lng: -94.6792 },
+  { line1: "9100 W 74th St",          city: "Shawnee Mission", state: "KS", zip: "66204", lat: 38.9871, lng: -94.6896 },
+  { line1: "20333 W 151st St",        city: "Olathe",      state: "KS", zip: "66061", lat: 38.8814, lng: -94.7977 },
 ];
 
-const LANGUAGES_BY_METRO: Record<string, string[][]> = {
-  austin:  [["en"], ["en", "es"], ["en", "es"], ["en"], ["en", "vi"]],
-  atlanta: [["en"], ["en", "es"], ["en"], ["en", "ko"], ["en", "ht"]],
-  chicago: [["en"], ["en", "es"], ["en", "pl"], ["en", "zh"], ["en"]],
-};
+// KC has notable Vietnamese, Somali, and Bosnian populations alongside
+// Spanish-speaking communities — language mix reflects that.
+const KC_LANGUAGES: string[][] = [
+  ["en"],
+  ["en"],
+  ["en", "es"],
+  ["en", "es"],
+  ["en", "vi"],
+  ["en", "so"],
+  ["en", "bs"],
+];
 
 const STATUS_DISTRIBUTION: Array<{ s: "yes" | "no" | "full" | "unknown"; w: number }> = [
   { s: "yes",     w: 5 },
@@ -123,12 +127,10 @@ function fakePhone(): string {
 // --- Build records ---------------------------------------------------------
 type Metro = { name: string; addrs: Addr[]; langPool: string[][] };
 const METROS: Metro[] = [
-  { name: "austin",  addrs: AUSTIN,  langPool: LANGUAGES_BY_METRO.austin },
-  { name: "atlanta", addrs: ATLANTA, langPool: LANGUAGES_BY_METRO.atlanta },
-  { name: "chicago", addrs: CHICAGO, langPool: LANGUAGES_BY_METRO.chicago },
+  { name: "kc_metro", addrs: KC_METRO, langPool: KC_LANGUAGES },
 ];
 
-const PER_METRO = 17;
+const PROVIDER_COUNT = 50;
 const now = new Date();
 
 const providerRows: Array<typeof schema.providers.$inferInsert> = [];
@@ -136,7 +138,7 @@ const locationRows: Array<typeof schema.providerLocations.$inferInsert> = [];
 const reportRows: Array<typeof schema.acceptingStatusReports.$inferInsert> = [];
 
 for (const metro of METROS) {
-  for (let i = 0; i < PER_METRO; i++) {
+  for (let i = 0; i < PROVIDER_COUNT; i++) {
     const npi = fakeNpi();
     const tax = pick(TAXONOMIES as unknown as typeof TAXONOMIES[number][]);
     const first = pick(FIRST_NAMES);
@@ -185,16 +187,99 @@ for (const metro of METROS) {
   }
 }
 
+// --- Clinic seed (real KC-area FQHCs + sliding-scale safety-net sites) ----
+// Real facility names and addresses for HRSA-funded Federally Qualified
+// Health Centers and one large non-FQHC safety-net hospital (University
+// Health). All operate on a sliding fee scale. Phone numbers use the
+// 555-01xx fictional range because this is demo data — real phone numbers
+// arrive when `npm run etl:hrsa` is run against the live HRSA CSV.
+const clinicRows: Array<typeof schema.clinics.$inferInsert> = [
+  {
+    hrsaSiteId: "seed:swope-central",
+    name: "Swope Health Central",
+    addressLine1: "3801 Blue Pkwy",
+    city: "Kansas City", state: "MO", zip: "64130",
+    phone: "(555) 0150-0010",
+    servicesOffered: JSON.stringify(["primary_care", "dental", "behavioral", "prenatal"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.0331, lng: -94.5316,
+  },
+  {
+    hrsaSiteId: "seed:kc-care-midtown",
+    name: "KC CARE Health Center — Midtown",
+    addressLine1: "3515 Broadway Blvd",
+    city: "Kansas City", state: "MO", zip: "64111",
+    phone: "(555) 0150-0020",
+    servicesOffered: JSON.stringify(["primary_care", "behavioral", "pharmacy"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.0628, lng: -94.5894,
+  },
+  {
+    hrsaSiteId: "seed:rodgers-euclid",
+    name: "Samuel U. Rodgers Health Center",
+    addressLine1: "825 Euclid Ave",
+    city: "Kansas City", state: "MO", zip: "64124",
+    phone: "(555) 0150-0030",
+    servicesOffered: JSON.stringify(["primary_care", "dental", "behavioral", "prenatal", "pharmacy"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.1083, lng: -94.5527,
+  },
+  {
+    hrsaSiteId: "seed:university-health-truman",
+    name: "University Health Truman Medical Center",
+    addressLine1: "2301 Holmes St",
+    city: "Kansas City", state: "MO", zip: "64108",
+    phone: "(555) 0150-0040",
+    servicesOffered: JSON.stringify(["primary_care", "behavioral", "pharmacy"]),
+    // Truman/University Health is a public hospital district, not an HRSA
+    // grantee — flag is_fqhc=false but it does run a sliding fee scale.
+    isFqhc: false, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.0859, lng: -94.5747,
+  },
+  {
+    hrsaSiteId: "seed:vibrant-wyandotte",
+    name: "Vibrant Health — Argentine",
+    addressLine1: "1428 S 32nd St",
+    city: "Kansas City", state: "KS", zip: "66106",
+    phone: "(555) 0150-0050",
+    servicesOffered: JSON.stringify(["primary_care", "dental", "behavioral"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.0867, lng: -94.6760,
+  },
+  {
+    hrsaSiteId: "seed:health-partnership-olathe",
+    name: "Health Partnership Clinic",
+    addressLine1: "407 S Clairborne Rd",
+    city: "Olathe", state: "KS", zip: "66062",
+    phone: "(555) 0150-0060",
+    servicesOffered: JSON.stringify(["primary_care", "dental", "behavioral"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 38.8634, lng: -94.7745,
+  },
+  {
+    hrsaSiteId: "seed:southwest-blvd",
+    name: "Southwest Boulevard Family Health Care",
+    addressLine1: "340 S 17th St",
+    city: "Kansas City", state: "KS", zip: "66102",
+    phone: "(555) 0150-0070",
+    servicesOffered: JSON.stringify(["primary_care", "behavioral", "prenatal"]),
+    isFqhc: true, isLookAlike: false, slidingFeeScale: true,
+    lat: 39.1167, lng: -94.6555,
+  },
+];
+
 // --- Wipe + insert ---------------------------------------------------------
-console.log(`Seeding ${providerRows.length} providers across ${METROS.length} metros...`);
+console.log(`Seeding ${providerRows.length} providers and ${clinicRows.length} clinics across the Kansas City metro...`);
 db.run(sql`DELETE FROM accepting_status_reports`);
 db.run(sql`DELETE FROM provider_locations`);
 db.run(sql`DELETE FROM providers`);
+db.run(sql`DELETE FROM clinics`);
 
 db.insert(schema.providers).values(providerRows).run();
 db.insert(schema.providerLocations).values(locationRows).run();
 if (reportRows.length) {
   db.insert(schema.acceptingStatusReports).values(reportRows).run();
 }
+db.insert(schema.clinics).values(clinicRows).run();
 
-console.log(`Done. ${providerRows.length} providers, ${locationRows.length} locations, ${reportRows.length} status reports.`);
+console.log(`Done. ${providerRows.length} providers, ${locationRows.length} locations, ${reportRows.length} status reports, ${clinicRows.length} clinics.`);

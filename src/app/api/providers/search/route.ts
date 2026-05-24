@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: "Could not geocode ZIP",
-        hint: "Try a ZIP in Austin (78701), Atlanta (30303), or Chicago (60601), or set NEXT_PUBLIC_MAPBOX_TOKEN for nationwide coverage.",
+        hint: "Try a Kansas City metro ZIP (e.g. 64108, 66160, 66112, 64111), or set NEXT_PUBLIC_MAPBOX_TOKEN for nationwide coverage.",
       },
       { status: 422 },
     );

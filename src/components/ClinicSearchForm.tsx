@@ -2,7 +2,12 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 
-export default function SearchForm() {
+/**
+ * Search form for the clinic finder. Simpler than the doctor SearchForm —
+ * no specialty selector, no "accepting new patients" filter (FQHCs are
+ * required to take all comers). Service filter is a single dropdown.
+ */
+export default function ClinicSearchForm() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -14,9 +19,10 @@ export default function SearchForm() {
     if (!zip) return;
     next.set("zip", zip);
     next.set("radius_miles", String(fd.get("radius_miles") ?? "10"));
-    next.set("specialty", String(fd.get("specialty") ?? "all_primary"));
-    if (fd.get("accepting_only") === "on") next.set("accepting_only", "true");
-    router.push(`/find-doctor?${next.toString()}`);
+    const service = String(fd.get("service") ?? "any");
+    if (service && service !== "any") next.set("service", service);
+    if (fd.get("fqhc_only") === "on") next.set("fqhc_only", "true");
+    router.push(`/find-clinic?${next.toString()}`);
   }
 
   return (
@@ -56,28 +62,31 @@ export default function SearchForm() {
         </label>
 
         <label className="md:col-span-4 text-sm font-medium text-slate-700">
-          Specialty
+          Service
           <select
-            name="specialty"
-            defaultValue={params.get("specialty") ?? "all_primary"}
+            name="service"
+            defaultValue={params.get("service") ?? "any"}
             className="mt-1 block w-full rounded-md border-slate-300 border px-3 py-2"
           >
-            <option value="all_primary">All primary care</option>
-            <option value="family_medicine">Family medicine</option>
-            <option value="internal_medicine">Internal medicine</option>
-            <option value="pediatrics">Pediatrics</option>
-            <option value="primary_care">Nurse practitioners (primary care)</option>
+            <option value="any">Any service</option>
+            <option value="primary_care">Primary care</option>
+            <option value="dental">Dental</option>
+            <option value="behavioral">Behavioral / mental health</option>
+            <option value="prenatal">Prenatal</option>
+            <option value="pharmacy">On-site pharmacy</option>
+            <option value="vision">Vision</option>
+            <option value="substance_use">Substance use</option>
           </select>
         </label>
 
         <label className="md:col-span-3 text-sm font-medium text-slate-700 flex items-center gap-2 md:pb-2">
           <input
             type="checkbox"
-            name="accepting_only"
-            defaultChecked={params.get("accepting_only") === "true"}
+            name="fqhc_only"
+            defaultChecked={params.get("fqhc_only") === "true"}
             className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
           />
-          Accepting new patients only
+          FQHC only (excludes look-alikes &amp; safety-net hospitals)
         </label>
       </div>
       <div className="mt-4 flex justify-end">

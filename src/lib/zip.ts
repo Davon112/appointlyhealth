@@ -1,10 +1,17 @@
-import zipData from "../../data/zip-coords.json";
+import zipData from "../../data/kc-metro-zips.json";
 
 type ZipEntry = { lat: number; lng: number; city: string; state: string };
 type ZipMap = Record<string, ZipEntry>;
 
 const STATIC: ZipMap = Object.fromEntries(
-  Object.entries(zipData).filter(([k]) => k !== "_comment"),
+  Object.entries(zipData).filter(
+    ([k, v]) =>
+      !k.startsWith("_") &&
+      typeof v === "object" &&
+      v !== null &&
+      "lat" in v &&
+      "lng" in v,
+  ),
 ) as ZipMap;
 
 export type GeocodeResult = {
@@ -17,9 +24,9 @@ export type GeocodeResult = {
 
 /**
  * Geocode a ZIP. Falls back to Mapbox if NEXT_PUBLIC_MAPBOX_TOKEN is set
- * and the ZIP isn't in our small static lookup.
+ * and the ZIP isn't in our KC-metro static lookup.
  *
- * For the seed metros (Austin, Atlanta, Chicago), no token is required.
+ * For ZIPs within the 14-county Kansas City MSA, no token is required.
  */
 export async function geocodeZip(zip: string): Promise<GeocodeResult | null> {
   const clean = zip.trim();

@@ -11,7 +11,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "rm -f appointly.db && npm run db:migrate && npm run db:seed",
-    "etl:nppes": "tsx scripts/etl-nppes.ts"
+    "etl:nppes": "tsx scripts/etl-nppes.ts",
+    "etl:hrsa": "tsx scripts/etl-hrsa.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",

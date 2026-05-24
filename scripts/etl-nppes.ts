@@ -19,11 +19,17 @@
  *   # download fresh & load all states (slow — geocoding limit applies)
  *   npm run etl:nppes -- --download
  *
- *   # use a file you already have
- *   npm run etl:nppes -- --file ./npidata_pfile.csv --state TX
+ *   # use a file you already have, restrict to one state
+ *   npm run etl:nppes -- --file ./npidata_pfile.csv --state MO
+ *
+ *   # restrict to the KC MSA via the ZIP allowlist (recommended for the KC build)
+ *   npm run etl:nppes -- --file ./npidata_pfile.csv --zip-allowlist data/kc-metro-zips.json
+ *
+ *   # combine: KS-side providers in the KC MSA
+ *   npm run etl:nppes -- --file ./npidata_pfile.csv --state KS --zip-allowlist data/kc-metro-zips.json
  *
  *   # dry run — count rows that would be inserted, do not write
- *   npm run etl:nppes -- --file ./npidata_pfile.csv --state TX --dry-run
+ *   npm run etl:nppes -- --file ./npidata_pfile.csv --state MO --dry-run
  *
  * NOTES
  *   - Without a Mapbox token, addresses without lat/lng in the NPPES file
@@ -45,6 +51,7 @@ type Args = {
   file?: string;
   download: boolean;
   state?: string;
+  zipAllowlist?: string;
   limit?: number;
   dryRun: boolean;
 };
@@ -56,10 +63,39 @@ function parseArgs(): Args {
     if (k === "--file") out.file = a[++i];
     else if (k === "--download") out.download = true;
     else if (k === "--state") out.state = a[++i]?.toUpperCase();
+    else if (k === "--zip-allowlist") out.zipAllowlist = a[++i];
     else if (k === "--limit") out.limit = Number(a[++i]);
     else if (k === "--dry-run") out.dryRun = true;
   }
   return out;
+}
+
+// ----------------------- ZIP allowlist loader -----------------------------
+// Loads a JSON file shaped like data/kc-metro-zips.json — a dict whose keys
+// are 5-digit ZIPs (plus optional `_`-prefixed metadata keys we ignore).
+// Returns a Set for O(1) membership checks on the hot path.
+function loadZipAllowlist(filePath: string): Set<string> {
+  if (!existsSync(filePath)) {
+    console.error(`ZIP allowlist file not found: ${filePath}`);
+    process.exit(1);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (e) {
+    console.error(`Failed to parse ZIP allowlist JSON at ${filePath}: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    console.error(`ZIP allowlist must be a JSON object keyed by ZIP code: ${filePath}`);
+    process.exit(1);
+  }
+  const zips = Object.keys(raw).filter((k) => !k.startsWith("_") && /^\d{5}$/.test(k));
+  if (!zips.length) {
+    console.error(`ZIP allowlist contains zero valid 5-digit ZIP keys: ${filePath}`);
+    process.exit(1);
+  }
+  return new Set(zips);
 }
 
 // ----------------------- taxonomy filter -----------------------------------
@@ -180,14 +216,21 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Reading ${file}${args.state ? ` (state=${args.state})` : ""}${args.dryRun ? " [DRY RUN]" : ""}`);
+  const zipAllowlist = args.zipAllowlist ? loadZipAllowlist(args.zipAllowlist) : null;
+
+  console.log(
+    `Reading ${file}` +
+    (args.state ? ` (state=${args.state})` : "") +
+    (zipAllowlist ? ` (zip-allowlist=${args.zipAllowlist}, ${zipAllowlist.size} ZIPs)` : "") +
+    (args.dryRun ? " [DRY RUN]" : ""),
+  );
 
   const stream = createReadStream(file, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
   let header: string[] | null = null;
   let colIdx: Record<string, number> = {};
-  let read = 0, matched = 0, inserted = 0, geocoded = 0, skippedNoGeo = 0;
+  let read = 0, matched = 0, inserted = 0, geocoded = 0, skippedNoGeo = 0, skippedNotInAllowlist = 0;
   let now = new Date();
 
   const batch: Array<{ provider: typeof schema.providers.$inferInsert; location: typeof schema.providerLocations.$inferInsert }> = [];
@@ -211,7 +254,7 @@ async function main() {
     batch.length = 0;
     if (inserted % 1000 === 0) {
       saveCache();
-      console.log(`  ...inserted ${inserted} (read ${read}, matched ${matched}, geocoded ${geocoded}, skipped-no-geo ${skippedNoGeo})`);
+      console.log(`  ...inserted ${inserted} (read ${read}, matched ${matched}, geocoded ${geocoded}, skipped-no-geo ${skippedNoGeo}, skipped-not-in-allowlist ${skippedNotInAllowlist})`);
     }
   }
 
@@ -255,6 +298,14 @@ async function main() {
     const zipRaw = get("Provider Business Practice Location Address Postal Code");
     const zip = zipRaw.length >= 5 ? zipRaw.slice(0, 5) : zipRaw;
 
+    // Filter by ZIP allowlist BEFORE geocoding — geocoding is the expensive
+    // step (rate-limited Mapbox calls), so skipping out-of-region rows here
+    // is what makes a KC-only ETL feasible on a free token.
+    if (zipAllowlist && !zipAllowlist.has(zip)) {
+      skippedNotInAllowlist++;
+      continue;
+    }
+
     const geo = await geocode(line1, city, state, zip);
     if (!geo) { skippedNoGeo++; continue; }
     geocoded++;
@@ -291,7 +342,12 @@ async function main() {
   await flush();
   saveCache();
 
-  console.log(`\nDone. Read ${read} rows, matched ${matched}, geocoded ${geocoded}, inserted ${inserted}, skipped (no geo) ${skippedNoGeo}.`);
+  console.log(
+    `\nDone. Read ${read} rows, matched ${matched}, geocoded ${geocoded}, ` +
+    `inserted ${inserted}, skipped (no geo) ${skippedNoGeo}` +
+    (zipAllowlist ? `, skipped (not in allowlist) ${skippedNotInAllowlist}` : "") +
+    `.`,
+  );
   if (args.dryRun) console.log("(dry run — no rows written)");
 }
 

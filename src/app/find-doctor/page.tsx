@@ -71,7 +71,7 @@ async function runSearch(sp: {
   const acceptingOnly = sp.accepting_only === "true";
 
   const geo = await geocodeZip(zip);
-  if (!geo) return { error: "Could not geocode that ZIP. Try 78701, 30303, or 60601 — or set NEXT_PUBLIC_MAPBOX_TOKEN for nationwide coverage." };
+  if (!geo) return { error: "Could not geocode that ZIP. Try a Kansas City metro ZIP like 64108, 66160, 66112, or 64111 — or set NEXT_PUBLIC_MAPBOX_TOKEN for nationwide coverage." };
 
   const bb = boundingBox(geo.lat, geo.lng, radius);
   const specialties = specialty === "all_primary" ? ALL_PRIMARY : [specialty];
@@ -156,7 +156,7 @@ export default async function FindDoctorPage({
         <h1 className="text-3xl font-bold text-slate-900">Find a doctor near you</h1>
         <p className="mt-2 text-slate-600">
           We surface primary-care providers in your area and show whether they're accepting new patients.
-          Demo data is loaded for Austin (78701), Atlanta (30303), and Chicago (60601).
+          Serving the Kansas City metro — try a KC ZIP like 64108 (Hospital Hill), 66160 (KU Med), 66112 (KCK), or 64111 (Westport).
         </p>
       </div>
 
@@ -195,7 +195,7 @@ export default async function FindDoctorPage({
                 <ul className="list-disc list-inside space-y-1">
                   <li>Widen the radius (currently {sp.radius_miles ?? 10} miles)</li>
                   <li>Uncheck "accepting new patients only"</li>
-                  <li>Try a seed ZIP: 78701, 30303, or 60601</li>
+                  <li>Try a KC-metro ZIP: 64108, 66160, 66112, or 64111</li>
                 </ul>
               </div>
             )}
