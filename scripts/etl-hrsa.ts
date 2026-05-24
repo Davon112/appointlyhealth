@@ -242,14 +242,24 @@ async function main() {
     if (!header) {
       header = parseCsvLine(line).map((s) => s.replace(/^"|"$/g, ""));
       cIdx = {
-        siteId:  resolveColumn(header, ["BHCMIS ID", "Site ID", "Health Center Site ID"]),
+        // Site-level unique key. "BPHC Assigned Number" (BPS-H80-* values) is
+        // the only field in this release that's truly unique per delivery
+        // site. Beware: "Health Center Location Identification Number" sounds
+        // right but is a per-grantee enum (1, 2, 3...) that collides across
+        // grantees; "BHCMIS Organization Identification Number" is the
+        // grantee, not the site. Both would cause silent upsert collisions.
+        siteId:  resolveColumn(header, [
+          "BPHC Assigned Number",
+          "Site ID",
+          "Health Center Site ID",
+        ]),
         name:    resolveColumn(header, ["Site Name", "Health Center Site Name"]),
         addr:    resolveColumn(header, ["Site Address", "Site Street Address", "Health Center Site Address"]),
         city:    resolveColumn(header, ["Site City", "Health Center Site City"]),
         state:   resolveColumn(header, ["Site State Abbreviation", "Site State", "State"]),
         zip:     resolveColumn(header, ["Site Postal Code", "Site ZIP Code", "ZIP"]),
         phone:   resolveColumn(header, ["Site Telephone Number", "Telephone"]),
-        siteType:resolveColumn(header, ["Site Type", "Health Center Type", "Site Status"]),
+        siteType:resolveColumn(header, ["Health Center Type", "Site Type", "Site Status"]),
         lat:     resolveColumn(header, ["Geocoding Artifact Address Primary Y Coordinate", "Latitude"]),
         lng:     resolveColumn(header, ["Geocoding Artifact Address Primary X Coordinate", "Longitude"]),
       };
