@@ -21,6 +21,7 @@ drizzle/*.snapshot.json
 !drizzle/meta/
 nppes_pfile.csv
 nppes_download/
+data/.geocode-cache.json
 
 # os
 .DS_Store

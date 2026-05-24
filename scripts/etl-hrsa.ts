@@ -34,6 +34,28 @@
  */
 import { createReadStream, existsSync, readFileSync } from "fs";
 import { createInterface } from "readline";
+
+// Load .env before importing anything that reads process.env. tsx invocations
+// don't auto-load .env the way Next.js does. HRSA itself doesn't need a token
+// (lat/lng come from the file), but keeping the loader in place is cheap and
+// avoids surprising the next person who adds a token-dependent step.
+function loadDotenv(envPath = ".env"): void {
+  if (!existsSync(envPath)) return;
+  for (const raw of readFileSync(envPath, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = val;
+  }
+}
+loadDotenv();
+
 import { db, schema } from "../src/db";
 
 // ----------------------- arg parsing --------------------------------------

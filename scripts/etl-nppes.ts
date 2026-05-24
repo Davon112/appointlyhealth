@@ -43,6 +43,28 @@ import { pipeline } from "stream/promises";
 import { Transform } from "stream";
 import { createInterface } from "readline";
 import path from "path";
+
+// Load .env BEFORE importing anything that reads process.env. Next.js loads
+// .env automatically; plain `tsx scripts/etl-nppes.ts` does not. Without
+// this, NEXT_PUBLIC_MAPBOX_TOKEN is undefined and the geocode helper bails
+// silently on every row.
+function loadDotenv(envPath = ".env"): void {
+  if (!existsSync(envPath)) return;
+  for (const raw of readFileSync(envPath, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = val;
+  }
+}
+loadDotenv();
+
 import { db, schema } from "../src/db";
 import { sql } from "drizzle-orm";
 
