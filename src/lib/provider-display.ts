@@ -68,44 +68,98 @@ export function cleanSpecialty(taxonomy: string | null | undefined): string | nu
 
 /**
  * Best-effort map from a KC-area practice address line 1 to the recognizable
- * name of the facility at that address. Hand-curated. Extend as you discover
- * other anchor addresses in your data — `SELECT address_line1, count(*) FROM
- * provider_locations GROUP BY 1 ORDER BY 2 DESC LIMIT 50` will surface the
- * most common addresses to add here.
+ * name of the facility at that address. Hand-curated.
+ *
+ * Keys are normalized: lowercased, punctuation-stripped (apostrophes/periods/
+ * commas removed), whitespace collapsed. Input addresses are normalized the
+ * same way before lookup, so case + apostrophe variants ("LEES" vs "Lee's")
+ * resolve identically.
+ *
+ * The lookup also does a prefix-with-word-boundary fallback so that
+ * "3901 rainbow blvd # ms 2027" matches the base "3901 rainbow blvd" entry.
+ *
+ * Coverage as of curation: ~30 anchors covering most rows in the top-60
+ * by provider count. Extend with:
+ *   SELECT address_line1, COUNT(*)::int
+ *   FROM provider_locations
+ *   GROUP BY 1 ORDER BY 2 DESC LIMIT 60;
  */
 const KC_PRACTICE_BY_ADDRESS: Record<string, string> = {
-  // MO — urban core
+  // ─── MO — urban-core hospitals ───────────────────────────────────────
   "2301 holmes st":               "University Health Truman Medical Center",
   "2401 gillham rd":              "Children's Mercy Kansas City",
   "2410 gillham rd":              "Children's Mercy Kansas City",
   "4401 wornall rd":              "Saint Luke's Hospital of Kansas City",
+  "4330 wornall rd":              "Saint Luke's Medical Plaza Building",
+  "4321 washington st":           "Saint Luke's Medical Plaza Building",
   "2316 e meyer blvd":            "Research Medical Center",
+  "4801 e linwood blvd":          "Research Medical Center",
   "3801 blue pkwy":               "Swope Health Central",
+  "3801 dr martin luther king jr blvd": "Swope Health Central",
   "825 euclid ave":               "Samuel U. Rodgers Health Center",
   "3515 broadway blvd":           "KC CARE Health Center",
-  "1004 carondelet dr":           "Saint Luke's Hospital — Plaza",
   "5701 troost ave":              "Saint Luke's Hospital — East",
-  // MO — suburbs
-  "7900 lee's summit rd":         "University Health Lakewood Medical Center",
+
+  // ─── MO — Saint Joseph Medical Center campus ────────────────────────
+  "1000 carondelet dr":           "Saint Joseph Medical Center",
+  "1004 carondelet dr":           "Saint Joseph Medical Center",
+  "1010 carondelet dr":           "Saint Joseph Medical Center",
+
+  // ─── MO — Suburbs ────────────────────────────────────────────────────
+  "7900 lees summit rd":          "University Health Lakewood Medical Center",
   "19600 e 39th st s":            "Centerpoint Medical Center",
   "17065 s 71 hwy":               "Belton Regional Medical Center",
   "2525 glenn hendren dr":        "Liberty Hospital",
-  "23000 midland dr":             "Lee's Summit Medical Center",
-  "2316 e meyer cir":             "Research Medical Center — Brookside",
-  // KS — Wyandotte / Johnson
+  "2609 glenn hendren dr":        "Liberty Hospital — Medical Office",
+  "1425 nw blue pkwy":            "Lee's Summit Medical Center",
+  "20 ne saint lukes blvd":       "Saint Luke's East Hospital",
+
+  // ─── MO — Northland ──────────────────────────────────────────────────
+  "2700 clay edwards dr":         "North Kansas City Hospital",
+  "2800 clay edwards dr":         "North Kansas City Hospital — Medical Plaza",
+
+  // ─── KS — Wyandotte / Johnson hospitals ──────────────────────────────
   "4000 cambridge st":            "University of Kansas Hospital",
-  "3901 rainbow blvd":            "KU Medical Center",
+  "3901 rainbow blvd":            "University of Kansas Medical Center",
   "5808 w 110th st":              "Children's Mercy Hospital Kansas",
   "9100 w 74th st":               "AdventHealth Shawnee Mission",
   "20333 w 151st st":             "Olathe Medical Center",
+  "20375 w 151st st":             "Olathe Medical Center",
   "5701 w 119th st":              "Menorah Medical Center",
   "8929 parallel pkwy":           "Providence Medical Center",
+  "10500 quivira rd":             "Overland Park Regional Medical Center",
+  "2330 shawnee mission pkwy":    "University of Kansas Health System — Westwood",
+  "2650 shawnee mission pkwy":    "University of Kansas Health System — Westwood",
 };
+
+function normalizeAddress(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/['’`.,]/g, "")  // strip apostrophes (straight + curly), periods, commas
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function lookupKcPractice(addressLine1: string | null | undefined): string | null {
   if (!addressLine1) return null;
-  const key = addressLine1.toLowerCase().trim().replace(/\s+/g, " ");
-  return KC_PRACTICE_BY_ADDRESS[key] ?? null;
+  const normalized = normalizeAddress(addressLine1);
+
+  // Exact match.
+  const direct = KC_PRACTICE_BY_ADDRESS[normalized];
+  if (direct) return direct;
+
+  // Prefix-with-boundary match — "3901 rainbow blvd # ms 2027" matches the
+  // "3901 rainbow blvd" key. The boundary check (next char must be space, #,
+  // or end-of-string) prevents "100 main st" from matching "100 mainstem ln".
+  for (const [key, name] of Object.entries(KC_PRACTICE_BY_ADDRESS)) {
+    if (normalized.startsWith(key)) {
+      const next = normalized.charAt(key.length);
+      if (next === "" || next === " " || next === "#" || next === ",") {
+        return name;
+      }
+    }
+  }
+  return null;
 }
 
 /**
